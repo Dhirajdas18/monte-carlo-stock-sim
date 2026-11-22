@@ -11,6 +11,7 @@ import pandas as pd
 from mc import plots
 from mc.data import INDEX, SYMBOLS, find_splits, growth_of, load_prices
 from mc.gbm import drift_stderr, gbm_closed_form, gbm_paths, mc_error_curve
+from mc.models import MODELS
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
 from mc.risk import prob_end_beyond, prob_touch, var_cvar
 from mc.validate import coverage, gbm_model, qq_points
@@ -490,8 +491,86 @@ def report_validate(out_dir: Path) -> dict:
     return result
 
 
+def report_models(out_dir: Path) -> dict:
+    """Five models through the same walk-forward test, plus tail size and speed."""
+    import time
+
+    syms = ["RELIANCE", INDEX]
+    prices = load_prices(syms)
+    lr = log_returns(prices)
+    horizon, window, capital = 21, 756, 100_000
+    names = list(MODELS)
+    result: dict = {}
+    miss99 = {s: [] for s in syms}
+    miss99_dn = {s: [] for s in syms}
+    cvar = {s: [] for s in syms}
+    real_cvar = {}
+    for sym in syms:
+        growth = (prices[sym].shift(-horizon) / prices[sym]).dropna().to_numpy()
+        real_pnl = capital * (growth / np.exp(lr[sym].mean() * horizon) - 1)
+        real_cvar[sym] = var_cvar(real_pnl, 0.99)[1]
+        result[f"{sym}_real_cvar99"] = round(real_cvar[sym])
+        for name in names:
+            t0 = time.perf_counter()
+            c99 = coverage(prices[sym], MODELS[name], horizon=horizon, window=window, step=5,
+                           level=0.99, n_paths=4000, seed=3)
+            c90 = coverage(prices[sym], MODELS[name], horizon=horizon, window=window, step=5,
+                           level=0.90, n_paths=4000, seed=4)
+            secs = time.perf_counter() - t0
+            m = 1 - c99["hit"].mean()
+            dn = (c99["actual"] < c99["lo"]).mean()
+            final = MODELS[name](lr[sym].to_numpy(), 1.0, horizon, 200_000,
+                                 np.random.default_rng(9))[:, -1]
+            cv = var_cvar(capital * (final - 1), 0.99)[1]
+            miss99[sym].append(m)
+            miss99_dn[sym].append(dn)
+            cvar[sym].append(cv)
+            key = name.split(" (")[0].replace(" ", "_").replace("-", "_").lower()
+            result[f"{sym}_{key}"] = (f"cov90 {c90['hit'].mean():.1%} | miss99 {m:.2%} "
+                                      f"(down {dn:.2%}) | cvar99 ₹{cv:,.0f} | {secs:.1f}s")
+    result["forecasts"] = len(c99)
+
+    y = np.arange(len(names))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    for ax, (title, data, target) in zip(
+        axes, [("Missed the 99% band (promised 1%)", miss99, 0.01),
+               ("…of which crashes below it (promised 0.5%)", miss99_dn, 0.005)], strict=True):
+        for k, sym in enumerate(syms):
+            ax.plot(data[sym], y + (k - 0.5) * 0.18, "o", ms=9, color=plots.COLORS[sym],
+                    label=sym)
+        ax.axvline(target, color=plots.TEXT, ls="--", lw=1.2)
+        ax.annotate("target", (target, len(names) - 0.45), xytext=(4, 0),
+                    textcoords="offset points", fontsize=9, color=plots.TEXT)
+        ax.set_xlim(0, max(max(v) for v in data.values()) * 1.25)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1%}"))
+        ax.set_title(title, fontsize=11)
+        ax.grid(axis="y", visible=False)
+    axes[0].set_yticks(y, names)
+    axes[0].invert_yaxis()
+    axes[1].legend(loc="lower right")
+    fig.suptitle("Walk-forward, 2016–2026: which model gets the extremes right?", x=0.01,
+                 ha="left", fontsize=13, fontweight="bold")
+    plots.save(fig, out_dir, "models-coverage")
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for k, sym in enumerate(syms):
+        ax.plot(cvar[sym], y + (k - 0.5) * 0.18, "o", ms=9, color=plots.COLORS[sym], label=sym)
+        ax.axvline(real_cvar[sym], color=plots.COLORS[sym], ls="--", lw=1.2)
+        ax.annotate(f"real {sym}", (real_cvar[sym], -0.55 + k * 0.3), xytext=(-4, 0),
+                    ha="right", textcoords="offset points", fontsize=9, color=plots.TEXT)
+    ax.set_yticks(y, names)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Average loss in the worst 1% of months, ₹1 lakh position")
+    ax.set_ylim(len(names) - 0.5, -0.8)
+    ax.set_title("How deep each model thinks a really bad month goes")
+    ax.legend(loc="lower left")
+    plots.save(fig, out_dir, "models-tail")
+    return result
+
+
 REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk,
-           "validate": report_validate}
+           "validate": report_validate, "models": report_models}
 
 
 def main(argv: list[str] | None = None) -> int:
