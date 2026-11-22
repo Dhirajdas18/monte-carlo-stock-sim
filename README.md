@@ -6,7 +6,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 
 > Monte Carlo gives a range of outcomes under a model's assumptions. It is not a price forecast. That is why every model here is validated walk-forward before it's used.
 
-![Simulated price paths](docs/img/gbm-fan.png)
+<picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-fan.png"><img src="docs/img/gbm-fan.gif" alt="Simulated price paths"></picture>
 
 ## Features
 
@@ -26,8 +26,8 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a split or bonus issue, not a loss. A data source that missed one ITC bonus reports 0.9%/yr; the real figure is 6.9%/yr. The pipeline flags any adjusted one-day drop over 20%.
 
 <table><tr>
-<td><img src="docs/img/data-raw-vs-adjusted.png" alt="Raw vs adjusted price around a split"></td>
-<td><img src="docs/img/data-growth-of-1-lakh.png" alt="Growth of ₹1 lakh since 2013"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/data-raw-vs-adjusted.png"><img src="docs/img/data-raw-vs-adjusted.gif" alt="Raw vs adjusted price around a split"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/data-growth-of-1-lakh.png"><img src="docs/img/data-growth-of-1-lakh.gif" alt="Growth of ₹1 lakh since 2013"></picture></td>
 </tr></table>
 
 ### 2. Real returns have fat tails, and √time only holds short-term
@@ -35,19 +35,19 @@ The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a spli
 Under a normal distribution, a day beyond 4σ should happen about 0.2 times in 14 years. Each stock had 16–22. Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months.
 
 <table><tr>
-<td><img src="docs/img/returns-vs-normal.png" alt="Daily returns vs the normal curve"></td>
-<td><img src="docs/img/returns-sqrt-time.png" alt="Square-root-of-time check"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/returns-vs-normal.png"><img src="docs/img/returns-vs-normal.gif" alt="Daily returns vs the normal curve"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/returns-sqrt-time.png"><img src="docs/img/returns-sqrt-time.gif" alt="Square-root-of-time check"></picture></td>
 </tr></table>
 
 ### 3. The historical mean return is not a forecast
 
 RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Plausible drifts move the median 1-year price from ₹1,327 to ₹1,851, so risk simulations default to zero drift. Even at zero drift, 55% of paths end below today's price (volatility drag). Antithetic sampling cuts the error of the simulated mean 3–5× at the same path count.
 
-![Drift uncertainty](docs/img/gbm-drift-uncertainty.png)
+<picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-drift-uncertainty.png"><img src="docs/img/gbm-drift-uncertainty.gif" alt="Drift uncertainty"></picture>
 
 <table><tr>
-<td><img src="docs/img/gbm-mean-vs-median.png" alt="Mean vs median final price"></td>
-<td><img src="docs/img/gbm-paths-needed.png" alt="Error vs number of paths"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-mean-vs-median.png"><img src="docs/img/gbm-mean-vs-median.gif" alt="Mean vs median final price"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-paths-needed.png"><img src="docs/img/gbm-paths-needed.gif" alt="Error vs number of paths"></picture></td>
 </tr></table>
 
 ### 4. VaR hides the tail; CVaR doesn't
@@ -55,8 +55,8 @@ RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Plausible dri
 On ₹1 lakh of RELIANCE over 1 month, historical VaR 95% (₹10.1k) looks safer than the GBM model's (₹12.1k). Yet the historical average loss in the worst 1% of months is ₹22.6k, against the model's ₹18.8k. Stop-losses trigger on touches: a −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time.
 
 <table><tr>
-<td><img src="docs/img/risk-var-cvar.png" alt="VaR and CVaR, model vs history"></td>
-<td><img src="docs/img/risk-touch-vs-end.png" alt="Touch vs end probabilities"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/risk-var-cvar.png"><img src="docs/img/risk-var-cvar.gif" alt="VaR and CVaR, model vs history"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/risk-touch-vs-end.png"><img src="docs/img/risk-touch-vs-end.gif" alt="Touch vs end probabilities"></picture></td>
 </tr></table>
 
 ### 5. A model can pass at 90% and fail at 99%
@@ -64,8 +64,8 @@ On ₹1 lakh of RELIANCE over 1 month, historical VaR 95% (₹10.1k) looks safer
 This is a walk-forward test over 2016–2026: 2,636 one-month forecasts per stock, each made using only the 3 years before it. GBM's 90% band holds (90–93% coverage). Its 99% band is breached 2–3× too often, and up to 3.5× on the downside. Its sense of risk also lags: coverage fell to ~70% in 2020 and sat near 100% in 2021–23. Using only prior data, it rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹.
 
 <table><tr>
-<td><img src="docs/img/validate-coverage.png" alt="Rolling coverage of the 90% band"></td>
-<td><img src="docs/img/validate-worst-months.png" alt="Model odds of the worst real months"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/validate-coverage.png"><img src="docs/img/validate-coverage.gif" alt="Rolling coverage of the 90% band"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/validate-worst-months.png"><img src="docs/img/validate-worst-months.gif" alt="Model odds of the worst real months"></picture></td>
 </tr></table>
 
 ### 6. Only the block bootstrap gets the depth of a bad month right
@@ -77,8 +77,8 @@ Resampling single days (plain bootstrap) barely beats GBM. Over a month, indepen
 No model fixes the walk-forward 99% misses. Those come from volatility regime shifts, not the shape of the distribution.
 
 <table><tr>
-<td><img src="docs/img/models-tail.png" alt="Tail depth per model"></td>
-<td><img src="docs/img/models-coverage.png" alt="Walk-forward 99% coverage per model"></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/models-tail.png"><img src="docs/img/models-tail.gif" alt="Tail depth per model"></picture></td>
+<td><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/models-coverage.png"><img src="docs/img/models-coverage.gif" alt="Walk-forward 99% coverage per model"></picture></td>
 </tr></table>
 
 ## Quick start

@@ -290,7 +290,8 @@ def report_gbm(out_dir: Path) -> dict:
         key = ["zero", "minus2se", "hist", "plus2se"][i]
         result[f"drift_{key}_p5_p50_p95"] = f"{lo:,.0f} / {med:,.0f} / {hi:,.0f}"
     ax.axvline(s0, color=plots.TEXT_2, lw=1, ls="--")
-    ax.annotate(f"today ₹{s0:,.0f}", (s0, len(cases) - 0.55), xytext=(4, 0),
+    ax.set_ylim(-0.7, len(cases) - 0.5)
+    ax.annotate(f"today ₹{s0:,.0f}", (s0, -0.55), xytext=(4, 0),
                 textcoords="offset points", fontsize=9, color=plots.TEXT_2)
     ax.set_yticks(range(len(cases)), [c[0] for c in cases])
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
