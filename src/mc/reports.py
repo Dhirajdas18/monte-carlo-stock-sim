@@ -20,6 +20,14 @@ from mc.portfolio import (
 )
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
 from mc.risk import prob_end_beyond, prob_touch, var_cvar
+from mc.strategy import (
+    kelly_fraction,
+    luck_probability,
+    max_drawdown,
+    momentum_returns,
+    ruin_probability,
+    simulate_equity,
+)
 from mc.validate import coverage, gbm_model, qq_points
 
 OUT = Path("out")
@@ -670,8 +678,138 @@ def report_portfolio(out_dir: Path) -> dict:
     return result
 
 
+def _cagr(r: pd.Series) -> float:
+    return float((1 + r).prod() ** (TRADING_DAYS / len(r)) - 1)
+
+
+def report_strategy(out_dir: Path) -> dict:
+    """Strategy risk: alternate histories, drawdown spread, luck test, Kelly sizing."""
+    prices = load_prices(SYMBOLS + [INDEX])
+    mom = momentum_returns(prices[SYMBOLS], lookback=252, top_n=2, rebalance=21)
+    nifty = prices[INDEX].pct_change().reindex(mom.index)
+    strategies = {"NIFTY buy-and-hold": nifty, "Momentum, top 2 of 5": mom}
+    colors = {"NIFTY buy-and-hold": plots.COLORS[INDEX], "Momentum, top 2 of 5": plots.SERIES[6]}
+    n_days, n = len(mom), 10_000
+    result: dict = {"period": f"{mom.index[0]:%Y-%m-%d} to {mom.index[-1]:%Y-%m-%d}",
+                    "years": round(n_days / TRADING_DAYS, 1), "costs": "none (stated)"}
+    sims = {}
+    for name, r in strategies.items():
+        key = "nifty" if name.startswith("NIFTY") else "mom"
+        eq = (1 + r).cumprod().to_numpy()
+        result[f"{key}_cagr"] = round(_cagr(r), 4)
+        result[f"{key}_vol"] = round(float(r.std() * np.sqrt(TRADING_DAYS)), 4)
+        result[f"{key}_hist_maxdd"] = round(max_drawdown(eq), 3)
+        sims[name] = {b: simulate_equity(r, n_days, n, block=b, seed=31) for b in (None, 20)}
+        dd = max_drawdown(sims[name][20])
+        result[f"{key}_sim_maxdd_median"] = round(float(np.median(dd)), 3)
+        result[f"{key}_sim_maxdd_p95"] = round(float(np.percentile(dd, 95)), 3)
+        result[f"{key}_sim_maxdd_iid_median"] = round(float(np.median(max_drawdown(
+            sims[name][None]))), 3)
+        ends = sims[name][20][:, -1] ** (TRADING_DAYS / n_days) - 1
+        result[f"{key}_sim_cagr_p5_p50_p95"] = " / ".join(
+            f"{v:.1%}" for v in np.percentile(ends, [5, 50, 95]))
+
+    # 1. Alternate histories: the backtest is one path out of many.
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.3), sharey=True)
+    for ax, (name, r) in zip(axes, strategies.items(), strict=True):
+        alt = sims[name][20][:150]
+        x = np.arange(n_days + 1)
+        ax.plot(x, alt.T, color=plots.MUTED, lw=0.5, alpha=0.25)
+        actual = np.concatenate([[1.0], (1 + r).cumprod().to_numpy()])
+        ax.plot(x, actual, color=colors[name], lw=2.5)
+        ax.set_yscale("log")
+        ax.set_title(name, fontsize=11)
+        ax.set_xticks(np.arange(0, n_days, TRADING_DAYS * 2),
+                      [f"yr {k}" for k in range(0, n_days // TRADING_DAYS + 1, 2)])
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}×" if v >= 1
+                                                       else f"{v:.1f}×"))
+    axes[0].set_ylabel("Growth of ₹1")
+    fig.suptitle("The backtest (colour) was one possible history; grey = same days reshuffled",
+                 x=0.01,
+                 ha="left", fontsize=13, fontweight="bold")
+    plots.save(fig, out_dir, "strategy-alternate-histories")
+
+    # 2. Max drawdown spread, iid vs block, momentum.
+    name = "Momentum, top 2 of 5"
+    fig, ax = plt.subplots(figsize=(8, 4.2))
+    bins = np.linspace(0, 0.8, 81)
+    for b, color, label in [(None, plots.MUTED, "Days reshuffled one by one"),
+                            (20, colors[name], "Reshuffled in 20-day runs (keeps clustering)")]:
+        ax.hist(max_drawdown(sims[name][b]), bins=bins, color=color, alpha=0.7, label=label)
+    hist_dd = result["mom_hist_maxdd"]
+    ax.axvline(hist_dd, color=plots.TEXT, lw=1.5, ls="--")
+    ax.annotate(f"Backtest's actual\nworst fall −{hist_dd:.0%}", (hist_dd, ax.get_ylim()[1] * 0.85),
+                xytext=(6, 0), textcoords="offset points", fontsize=9, color=plots.TEXT)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"−{v:.0%}"))
+    ax.set_yticks([])
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel(f"Worst peak-to-trough fall over {result['years']} years")
+    ax.set_title("Momentum: the worst fall you saw is not the worst fall to expect")
+    ax.legend(loc="upper left", fontsize=8.5)
+    plots.save(fig, out_dir, "strategy-drawdown")
+
+    # 3. Luck test: bootstrap distribution of annual excess return vs NIFTY.
+    excess = (mom - nifty).to_numpy()
+    rng = np.random.default_rng(32)
+    starts = rng.integers(0, len(excess), (10_000, -(-len(excess) // 20)))
+    idx = (starts[:, :, None] + np.arange(20)).reshape(10_000, -1)[:, : len(excess)] % len(excess)
+    boot = excess[idx].mean(axis=1) * TRADING_DAYS
+    luck = luck_probability(mom, nifty, n_boot=10_000, block=20, seed=32)
+    result["mom_excess_vs_nifty_per_yr"] = round(float(excess.mean() * TRADING_DAYS), 4)
+    result["luck_probability"] = round(luck, 3)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    b2 = np.linspace(boot.min(), boot.max(), 80)
+    ax.hist(boot[boot > 0], bins=b2, color=colors[name], alpha=0.85, label="Edge positive")
+    ax.hist(boot[boot <= 0], bins=b2, color=plots.SERIES[7], alpha=0.85,
+            label=f"Edge zero or negative: {luck:.1%} of resamples")
+    ax.axvline(0, color=plots.TEXT, lw=1.2)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:+.0%}"))
+    ax.set_yticks([])
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Momentum's yearly return minus NIFTY's, across resampled histories")
+    ax.set_title("Could the edge be luck?")
+    ax.legend(loc="upper left")
+    plots.save(fig, out_dir, "strategy-luck")
+
+    # 4. Bet sizing: ruin and typical outcome vs fraction of Kelly (10-year horizon).
+    k = kelly_fraction(mom)
+    result["kelly_exposure"] = round(k, 2)
+    fracs = np.array([0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
+    horizon = TRADING_DAYS * 10
+    ruin, med = [], []
+    for f in fracs:
+        eq = simulate_equity(mom, horizon, 5_000, block=20, fraction=f * k, seed=33)
+        ruin.append(float((eq.min(axis=1) <= 0.5).mean()))
+        med.append(float(np.median(eq[:, -1])))
+    result["ruin_half_kelly"] = round(ruin_probability(mom, 0.5 * k, horizon, 5_000, block=20,
+                                                       seed=33), 3)
+    result["ruin_full_kelly"] = round(ruin[3], 3)
+    result["median_x_half_kelly"] = round(med[1], 1)
+    result["median_x_full_kelly"] = round(med[3], 1)
+    result["ruin_by_fraction"] = ", ".join(f"{f}K:{p:.0%}" for f, p in zip(fracs, ruin,
+                                                                           strict=True))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharex=True)
+    axes[0].plot(fracs, ruin, color=plots.SERIES[7], marker="o", ms=8)
+    axes[0].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    axes[0].set_title("Chance of losing half your money at some point", fontsize=11)
+    axes[1].plot(fracs, med, color=colors[name], marker="o", ms=8)
+    axes[1].yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}×"))
+    axes[1].set_title("Typical (median) growth of ₹1 in 10 years", fontsize=11)
+    for ax in axes:
+        ax.set_xticks(fracs, [f"{f:g}×" for f in fracs])
+        ax.set_xlabel(f"Bet size as a multiple of Kelly (Kelly = {k:.1f}× capital)")
+        ax.axvline(1 / k, color=plots.TEXT_2, lw=1, ls=":")
+        ax.annotate("100% invested,\nno borrowing", (1 / k, ax.get_ylim()[1]), xytext=(4, -24),
+                    textcoords="offset points", fontsize=9, color=plots.TEXT_2)
+    fig.suptitle("Bigger bets: more ruin, and past Kelly, not even more growth", x=0.01,
+                 ha="left", fontsize=13, fontweight="bold")
+    plots.save(fig, out_dir, "strategy-kelly")
+    return result
+
+
 REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk,
-           "validate": report_validate, "models": report_models, "portfolio": report_portfolio}
+           "validate": report_validate, "models": report_models, "portfolio": report_portfolio,
+           "strategy": report_strategy}
 
 
 def main(argv: list[str] | None = None) -> int:

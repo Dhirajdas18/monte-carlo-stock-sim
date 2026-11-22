@@ -17,7 +17,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 - [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead), and is checked at both the 90% and 99% levels.
 - [x] **Alternative models.** Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap, all compared on the same walk-forward test.
 - [x] **Correlated portfolio simulation.** Cholesky and joint-day block bootstrap, buy-and-hold portfolios, and calm vs crash-day correlation.
-- [ ] Strategy risk: drawdown distributions, the probability that an edge is luck, and Kelly position sizing
+- [x] **Strategy risk.** Resampled equity curves, drawdown distributions, the probability that an edge is luck, and Kelly position sizing.
 
 ## Findings
 
@@ -92,6 +92,38 @@ On ₹5 lakh, holding one stock (RELIANCE) loses ₹1.14L (22.9%) on average in 
 <td><a href="docs/img/portfolio-crash-correlation.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/portfolio-crash-correlation.png"><img src="docs/img/portfolio-crash-correlation.gif" alt="Correlation on normal vs crash days"></picture></a></td>
 </tr></table>
 
+### 8. A backtest is one possible history
+
+Comparing NIFTY buy-and-hold with a simple momentum rule (hold the top 2 of the 5 stocks by 12-month return, monthly rebalance, no costs) over 2014–2026:
+
+- **The edge may be luck.** Momentum beat NIFTY by 1.65%/yr, but in 33% of block-bootstrap resamples its edge is zero or negative. That's before trading costs, and the NIFTY series here excludes dividends while the stocks include them.
+- **Plan for a worse drawdown than the backtest showed.** Both had a 38% worst fall. Reshuffled in 20-day runs, the median is 35–37% and 1 in 20 histories falls 54–58%. Reshuffling single days understates it (median 29–34%) because it breaks up bad streaks.
+- **Bet size matters more than the edge.** Full Kelly exposure is 3.9× capital: a 46% chance of halving the money at some point within 10 years. Half Kelly cuts that to 14%, and 100% invested without leverage (≈ ¼ Kelly) to about 1%. Past full Kelly, even the median outcome shrinks, and at 2× Kelly ₹1 typically ends near ₹0.7.
+
+<a href="docs/img/strategy-alternate-histories.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/strategy-alternate-histories.png"><img src="docs/img/strategy-alternate-histories.gif" alt="Backtest vs resampled alternate histories"></picture></a>
+
+<table><tr>
+<td><a href="docs/img/strategy-drawdown.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/strategy-drawdown.png"><img src="docs/img/strategy-drawdown.gif" alt="Distribution of maximum drawdown"></picture></a></td>
+<td><a href="docs/img/strategy-luck.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/strategy-luck.png"><img src="docs/img/strategy-luck.gif" alt="Bootstrap distribution of the excess return"></picture></a></td>
+</tr></table>
+
+<a href="docs/img/strategy-kelly.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/strategy-kelly.png"><img src="docs/img/strategy-kelly.gif" alt="Ruin probability and median growth vs Kelly fraction"></picture></a>
+
+## Use it on your own strategy
+
+```python
+import pandas as pd
+from mc.strategy import luck_probability, max_drawdown, ruin_probability, simulate_equity
+
+r = pd.read_csv("my_strategy_daily_returns.csv", index_col=0, parse_dates=True)["ret"]
+bench = pd.read_csv("benchmark_daily_returns.csv", index_col=0, parse_dates=True)["ret"]
+
+paths = simulate_equity(r, days=len(r), n_paths=10_000, block=20, seed=0)
+print("median / 95th pct max drawdown:", pd.Series(max_drawdown(paths)).quantile([0.5, 0.95]))
+print("chance the edge is luck:", luck_probability(r, bench, block=20, seed=0))
+print("chance of halving at full exposure:", ruin_probability(r, 1.0, 2520, 5000, block=20, seed=0))
+```
+
 ## Quick start
 
 ```bash
@@ -104,6 +136,7 @@ uv run mc-report risk
 uv run mc-report validate
 uv run mc-report models
 uv run mc-report portfolio
+uv run mc-report strategy
 uv run pytest
 ```
 
@@ -111,7 +144,7 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `portfolio`, `plots`, `reports`.
+- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `portfolio`, `strategy`, `plots`, `reports`.
 - Every model shares one interface, `model(past_log_returns, s0, days, n_paths, rng) -> paths`, so any model can go through the same walk-forward test.
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
 - Tests use synthetic data with known answers and never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
