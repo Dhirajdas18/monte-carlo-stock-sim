@@ -90,3 +90,16 @@ def find_splits(raw: pd.Series, adj: pd.Series, threshold: float = 0.2) -> pd.Da
 def growth_of(prices: pd.DataFrame, amount: float = 100_000) -> pd.DataFrame:
     """Value of `amount` invested in each column on the first row, held to the end."""
     return prices / prices.iloc[0] * amount
+
+
+def flag_adjusted_drops(
+    adj: pd.DataFrame, threshold: float = 0.2
+) -> list[tuple[str, pd.Timestamp]]:
+    """(symbol, date) pairs where an *adjusted* price falls more than `threshold` in a day.
+
+    Large-cap stocks rarely do that for real, so each hit is worth checking for a corporate
+    action the data source failed to adjust (e.g. a missed 1:2 bonus shows as about -33%).
+    """
+    moves = adj.pct_change().stack()
+    hits = moves[moves < -threshold]
+    return [(sym, date) for date, sym in hits.index]

@@ -74,3 +74,23 @@ def test_luck_probability():
     assert 0.35 < luck_probability(same_edge, bench, n_boot=2000, seed=0) < 0.65
     strong = bench + 0.002 + rng.normal(0, 0.002, 2000)
     assert luck_probability(strong, bench, n_boot=2000, seed=0) < 0.01
+
+
+def test_leveraged_equity_cannot_go_negative_and_recover():
+    r = pd.Series([0.0, -0.6, 0.5, 0.5])  # a -60% day at 2x leverage wipes the account
+    eq = simulate_equity(r, 200, 50, fraction=2.0, seed=0)
+    assert (eq >= 0).all()
+    wiped = (eq == 0).any(axis=1)
+    assert wiped.any()
+    assert (eq[wiped, -1] == 0).all()  # once at zero, it stays at zero
+
+
+def test_momentum_mid_series_shock_leaves_earlier_returns_unchanged():
+    p = _prices()
+    k = 400
+    base = momentum_returns(p, lookback=126, top_n=2, rebalance=21)
+    shocked = p.copy()
+    shocked.iloc[k:] *= np.linspace(1.0, 4.0, len(p) - k)[:, None]
+    after = momentum_returns(shocked, lookback=126, top_n=2, rebalance=21)
+    cut = p.index[k - 1]
+    assert np.allclose(base.loc[:cut], after.loc[:cut])

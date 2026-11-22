@@ -87,3 +87,12 @@ def test_unadjust_splits_compounds_multiple_splits():
     close = _series([10, 10, 10])
     splits = _series([0, 2, 1.5])
     assert unadjust_splits(close, splits).tolist() == [30, 15, 10]
+
+
+def test_flag_adjusted_drops_catches_missed_bonus():
+    from mc.data import flag_adjusted_drops
+
+    adj = pd.DataFrame({"ITC": [300.0, 301.0, 201.0, 202.0], "TCS": [10.0, 10.1, 10.2, 10.0]},
+                       index=pd.date_range("2016-06-29", periods=4, freq="D"))
+    flags = flag_adjusted_drops(adj, threshold=0.2)
+    assert list(flags) == [("ITC", pd.Timestamp("2016-07-01"))]

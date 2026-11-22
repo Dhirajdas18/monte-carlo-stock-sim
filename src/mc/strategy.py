@@ -52,7 +52,8 @@ def simulate_equity(daily_returns: pd.Series, days: int, n_paths: int, block: in
     """
     rng = np.random.default_rng(seed)
     r = _resample(np.asarray(daily_returns, float), days, n_paths, block, rng)
-    growth = np.cumprod(1 + fraction * r, axis=1)
+    # A leveraged loss beyond -100% wipes the account; equity can't go negative and recover.
+    growth = np.cumprod(np.maximum(1 + fraction * r, 0.0), axis=1)
     return np.hstack([np.ones((n_paths, 1)), growth])
 
 

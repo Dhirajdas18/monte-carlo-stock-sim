@@ -23,7 +23,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 
 ### 1. Unadjusted prices invent crashes
 
-The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a split or bonus issue, not a loss. A data source that missed one ITC bonus reports 0.9%/yr; the real figure is 6.9%/yr. The pipeline flags any adjusted one-day drop over 20%.
+The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a split or bonus issue, not a loss. In a check against a local NSE data lake that missed ITC's 2016 bonus, ITC showed 0.9%/yr against a real 6.9%/yr (that lake isn't public, so this figure can't be reproduced from Yahoo). The fetch script now flags any *adjusted* one-day drop over 20% for review; on the Yahoo data the only hit is INFY's real −21% results-day fall in April 2013.
 
 <table><tr>
 <td><a href="docs/img/data-raw-vs-adjusted.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/data-raw-vs-adjusted.png"><img src="docs/img/data-raw-vs-adjusted.gif" alt="Raw vs adjusted price around a split"></picture></a></td>
@@ -32,7 +32,7 @@ The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a spli
 
 ### 2. Real returns have fat tails, and √time only holds short-term
 
-Under a normal distribution, a day beyond 4σ should happen about 0.2 times in 14 years. Each stock had 16–22. Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months.
+Under a normal distribution, a day beyond 4σ should happen about 0.2 times in 14 years. Each stock had 16–22. Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it at 3–12 months, by up to ~40% for RELIANCE at 1 year (27% vs 19%). The long-horizon figures rest on only ~13 independent years.
 
 <table><tr>
 <td><a href="docs/img/returns-vs-normal.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/returns-vs-normal.png"><img src="docs/img/returns-vs-normal.gif" alt="Daily returns vs the normal curve"></picture></a></td>
@@ -41,7 +41,7 @@ Under a normal distribution, a day beyond 4σ should happen about 0.2 times in 1
 
 ### 3. The historical mean return is not a forecast
 
-RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Plausible drifts move the median 1-year price from ₹1,327 to ₹1,851, so risk simulations default to zero drift. Even at zero drift, 55% of paths end below today's price (volatility drag). Antithetic sampling cuts the error of the simulated mean 3–5× at the same path count.
+RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Within ±2 standard errors, the median 1-year price ranges from ₹1,385 to ₹1,851 (₹1,327 at zero drift), so risk simulations default to zero drift. Even at zero drift, 55% of paths end below today's price (volatility drag). Antithetic sampling cuts the error of the simulated mean 3–5× at the same path count.
 
 <a href="docs/img/gbm-drift-uncertainty.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-drift-uncertainty.png"><img src="docs/img/gbm-drift-uncertainty.gif" alt="Drift uncertainty"></picture></a>
 
@@ -50,9 +50,9 @@ RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Plausible dri
 <td><a href="docs/img/gbm-paths-needed.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/gbm-paths-needed.png"><img src="docs/img/gbm-paths-needed.gif" alt="Error vs number of paths"></picture></a></td>
 </tr></table>
 
-### 4. VaR hides the tail; CVaR doesn't
+### 4. Real bad months look milder than the model until the worst 1%
 
-On ₹1 lakh of RELIANCE over 1 month, historical VaR 95% (₹10.1k) looks safer than the GBM model's (₹12.1k). Yet the historical average loss in the worst 1% of months is ₹22.6k, against the model's ₹18.8k. Stop-losses trigger on touches: a −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time.
+On ₹1 lakh of RELIANCE over 1 month, real history looks *safer* than the GBM model at the 95% level, for VaR (₹10.4k vs ₹12.1k) and CVaR (₹14.3k vs ₹14.9k) alike. Only deep in the tail does it flip: the average loss in the worst 1% of real months is ₹22.8k, 22% worse than the model's ₹18.8k. Risk checks need to look at the 99% tail, not just 95%. Stop-losses trigger on touches: a −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time.
 
 <table><tr>
 <td><a href="docs/img/risk-var-cvar.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/risk-var-cvar.png"><img src="docs/img/risk-var-cvar.gif" alt="VaR and CVaR, model vs history"></picture></a></td>
@@ -61,20 +61,18 @@ On ₹1 lakh of RELIANCE over 1 month, historical VaR 95% (₹10.1k) looks safer
 
 ### 5. A model can pass at 90% and fail at 99%
 
-This is a walk-forward test over 2016–2026: 2,636 one-month forecasts per stock, each made using only the 3 years before it. GBM's 90% band holds (90–93% coverage). Its 99% band is breached 2–3× too often, and up to 3.5× on the downside. Its sense of risk also lags: coverage fell to ~70% in 2020 and sat near 100% in 2021–23. Using only prior data, it rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹.
+This is a walk-forward test over 2016–2026: 2,636 one-month forecasts per stock, each made using only the 3 years before it. GBM's 90% band holds (90–93% coverage). Its 99% band is breached 2–3× too often, and up to 3.5× on the downside. Its sense of risk also lags: coverage fell to ~70% in 2020 and sat near 100% in 2021–23. Using only prior data, it rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹. Caveat: the 2,636 forecasts overlap day by day, so there are only ~125 independent months, and most of the excess 99% misses come from one episode (2020). Treat the 2–3× as indicative, not precise.
 
 <table><tr>
 <td><a href="docs/img/validate-coverage.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/validate-coverage.png"><img src="docs/img/validate-coverage.gif" alt="Rolling coverage of the 90% band"></picture></a></td>
 <td><a href="docs/img/validate-worst-months.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/validate-worst-months.png"><img src="docs/img/validate-worst-months.gif" alt="Model odds of the worst real months"></picture></a></td>
 </tr></table>
 
-### 6. Only the block bootstrap gets the depth of a bad month right
+### 6. No model, trained on calmer years, foresaw 2020–2026
 
-Five models were compared on the same data. For the average loss in the worst 1% of months, the block bootstrap gives ₹23.0k (RELIANCE) and ₹20.5k (NIFTY), against real values of ₹22.8k and ₹20.75k. Every other model understates it, GBM on NIFTY by 43%.
+Five models (GBM, Student-t, Merton jump-diffusion, bootstrap, block bootstrap) were trained on 2013–2019 only and asked how deep a really bad month gets (average loss in the worst 1% of months). Against what 2020–2026 actually delivered, every model fell short: by 34–41% for RELIANCE and 59–63% for NIFTY. The block bootstrap was no better than the rest.
 
-Resampling single days (plain bootstrap) barely beats GBM. Over a month, independent fat-tailed days average out. It's bad days *clustering together* that makes monthly tails fat.
-
-No model fixes the walk-forward 99% misses. Those come from volatility regime shifts, not the shape of the distribution.
+Fitted on the full history, the block bootstrap does match the real figure (₹23.0k vs ₹23.0k for RELIANCE), but that is replay, not prediction: its 20-day blocks nearly reproduce the same windows it's scored on. A model can't contain a crash that isn't in its training data, so a margin of safety (stress scenarios) has to be added by hand. On the walk-forward 99% test, no model beat GBM in a meaningful way: with ~10 misses per model, a gap of one or two misses is noise.
 
 <table><tr>
 <td><a href="docs/img/models-tail.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/models-tail.png"><img src="docs/img/models-tail.gif" alt="Tail depth per model"></picture></a></td>
@@ -83,7 +81,7 @@ No model fixes the walk-forward 99% misses. Those come from volatility regime sh
 
 ### 7. Diversification is real, but simple models overstate it
 
-On ₹5 lakh, holding one stock (RELIANCE) loses ₹1.14L (22.9%) on average in the worst 1% of months. An equal-weight basket of the 5 cuts that to ₹88k (17.6%) when real days are replayed with all 5 stocks together. Treating the stocks as independent claims ₹42k (8.4%), and a correlation matrix with bell-curve moves claims ₹60k (12.0%): both make the basket look 2–3× safer than history says. The reason is crash days. Every one of the 10 stock pairs moves together more on NIFTY's worst 10% of days (average correlation 0.18 → 0.25), so protection thins out exactly when it's needed.
+On ₹5 lakh, holding one stock (RELIANCE) loses ₹1.14L (22.9%) on average in the worst 1% of months. An equal-weight basket of the 5 cuts that to ₹88k (17.6%) when real days are replayed with all 5 stocks together. Treating the stocks as independent claims ₹42k (8.4%), and a correlation matrix with bell-curve moves claims ₹60k (12.0%): they make the basket look about 2× and 1.5× safer than history says. The reason is crash days. Every one of the 10 stock pairs moves together more on NIFTY's worst 10% of days (average correlation 0.18 → 0.25), so protection thins out exactly when it's needed.
 
 <a href="docs/img/portfolio-basket-risk.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/portfolio-basket-risk.png"><img src="docs/img/portfolio-basket-risk.gif" alt="Basket vs single-stock tail loss under three methods"></picture></a>
 

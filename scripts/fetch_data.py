@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from mc.data import DATA_PATH, fetch_lake, fetch_yfinance
+from mc.data import DATA_PATH, INDEX, SYMBOLS, fetch_lake, fetch_yfinance, flag_adjusted_drops
 
 
 def main() -> None:
@@ -20,6 +20,9 @@ def main() -> None:
     source = "local lake" if lake else "Yahoo Finance"
     span = f"{df.index.min():%Y-%m-%d} to {df.index.max():%Y-%m-%d}"
     print(f"{source}: {len(df)} rows, {span} -> {out}")
+    for sym, date in flag_adjusted_drops(df[SYMBOLS + [INDEX]]):
+        print(f"  check {sym} {date:%Y-%m-%d}: adjusted price fell >20% in a day "
+              "(possible unadjusted split/bonus)")
 
 
 if __name__ == "__main__":

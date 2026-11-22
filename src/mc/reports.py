@@ -329,7 +329,8 @@ def report_risk(out_dir: Path) -> dict:
     sim = gbm_paths(s0, 0.0, sigma, days, 200_000, seed=11, antithetic=True)
     pnl_sim = capital * (sim[:, -1] / s0 - 1)
     real_growth = (prices.shift(-days) / prices).dropna()
-    pnl_real = capital * (real_growth.to_numpy() / np.exp(lr.mean() * days) - 1)  # de-trended
+    # De-trend to the models' zero-drift convention (mean daily log return = -σ²/2).
+    pnl_real = capital * (real_growth.to_numpy() / np.exp((lr.mean() + 0.5 * lr.var()) * days) - 1)
     for name, pnl in [("gbm", pnl_sim), ("real", pnl_real)]:
         for lvl in (0.95, 0.99):
             v, c = var_cvar(pnl, lvl)
@@ -522,7 +523,8 @@ def report_models(out_dir: Path) -> dict:
     real_cvar = {}
     for sym in syms:
         growth = (prices[sym].shift(-horizon) / prices[sym]).dropna().to_numpy()
-        real_pnl = capital * (growth / np.exp(lr[sym].mean() * horizon) - 1)
+        real_pnl = capital * (growth / np.exp((lr[sym].mean() + 0.5 * lr[sym].var()) * horizon)
+                              - 1)
         real_cvar[sym] = var_cvar(real_pnl, 0.99)[1]
         result[f"{sym}_real_cvar99"] = round(real_cvar[sym])
         for name in names:
@@ -544,6 +546,25 @@ def report_models(out_dir: Path) -> dict:
             result[f"{sym}_{key}"] = (f"cov90 {c90['hit'].mean():.1%} | miss99 {m:.2%} "
                                       f"(down {dn:.2%}) | cvar99 ₹{cv:,.0f} | {secs:.1f}s")
     result["forecasts"] = len(c99)
+
+    # Out of sample: fit on 2013–2019 only, compare with real 2020–2026 bad months.
+    split = "2020-01-01"
+    oos = {s: [] for s in syms}
+    oos_real = {}
+    for sym in syms:
+        train = lr[sym][lr.index < split].to_numpy()
+        test = prices[sym][prices.index >= split]
+        tlr = log_returns(test)
+        g = (test.shift(-horizon) / test).dropna().to_numpy()
+        oos_real[sym] = var_cvar(capital * (g / np.exp((tlr.mean() + 0.5 * tlr.var()) * horizon)
+                                            - 1), 0.99)[1]
+        result[f"{sym}_oos_real_cvar99_2020on"] = round(oos_real[sym])
+        for name in names:
+            f = MODELS[name](train, 1.0, horizon, 200_000, np.random.default_rng(9))[:, -1]
+            c = var_cvar(capital * (f - 1), 0.99)[1]
+            oos[sym].append(c)
+            key = name.split(" (")[0].replace(" ", "_").replace("-", "_").lower()
+            result[f"{sym}_oos_{key}"] = f"₹{c:,.0f} ({c / oos_real[sym] - 1:+.0%})"
 
     y = np.arange(len(names))
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
@@ -569,17 +590,20 @@ def report_models(out_dir: Path) -> dict:
 
     fig, ax = plt.subplots(figsize=(8, 4))
     for k, sym in enumerate(syms):
-        ax.plot(cvar[sym], y + (k - 0.5) * 0.18, "o", ms=9, color=plots.COLORS[sym], label=sym)
-        ax.axvline(real_cvar[sym], color=plots.COLORS[sym], ls="--", lw=1.2)
-        ax.annotate(f"real {sym}", (real_cvar[sym], -0.55 + k * 0.3), xytext=(-4, 0),
-                    ha="right", textcoords="offset points", fontsize=9, color=plots.TEXT)
+        ax.plot(oos[sym], y + (k - 0.5) * 0.18, "o", ms=9, color=plots.COLORS[sym], label=sym)
+        ax.axvline(oos_real[sym], color=plots.COLORS[sym], ls="--", lw=1.2)
+        right = oos_real[sym] >= max(oos_real.values())
+        ax.annotate(f"real {sym}\n2020–26", (oos_real[sym], -0.45), xytext=(4 if right else -4, 0),
+                    ha="left" if right else "right", textcoords="offset points", fontsize=9,
+                    color=plots.TEXT)
     ax.set_yticks(y, names)
     ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("Average loss in the worst 1% of months, ₹1 lakh position")
     ax.set_ylim(len(names) - 0.5, -0.8)
-    ax.set_title("How deep each model thinks a really bad month goes")
-    ax.legend(loc="lower left")
+    ax.set_xlim(0, max(oos_real.values()) * 1.18)
+    ax.set_title("Trained on 2013–2019, every model underestimated 2020–2026")
+    ax.legend(loc="center left")
     plots.save(fig, out_dir, "models-tail")
     return result
 
