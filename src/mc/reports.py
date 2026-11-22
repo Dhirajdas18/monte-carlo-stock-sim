@@ -12,6 +12,7 @@ from mc import plots
 from mc.data import INDEX, SYMBOLS, find_splits, growth_of, load_prices
 from mc.gbm import drift_stderr, gbm_closed_form, gbm_paths, mc_error_curve
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
+from mc.risk import prob_end_beyond, prob_touch, var_cvar
 
 OUT = Path("out")
 
@@ -298,7 +299,89 @@ def report_gbm(out_dir: Path) -> dict:
     return result
 
 
-REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm}
+def report_risk(out_dir: Path) -> dict:
+    """VaR vs CVaR on ₹1 lakh (GBM vs real history), touch vs end probabilities."""
+    sym, capital, days = "RELIANCE", 100_000, 21
+    prices = load_prices([sym])[sym]
+    lr = log_returns(prices)
+    s0 = float(prices.iloc[-1])
+    sigma = float(lr.std() * np.sqrt(TRADING_DAYS))
+    result: dict = {"capital": capital, "horizon_days": days, "sigma": round(sigma, 4)}
+
+    # 1-month P&L: GBM (drift 0) vs every real 21-day window since 2013.
+    sim = gbm_paths(s0, 0.0, sigma, days, 200_000, seed=11, antithetic=True)
+    pnl_sim = capital * (sim[:, -1] / s0 - 1)
+    real_growth = (prices.shift(-days) / prices).dropna()
+    pnl_real = capital * (real_growth.to_numpy() / np.exp(lr.mean() * days) - 1)  # de-trended
+    for name, pnl in [("gbm", pnl_sim), ("real", pnl_real)]:
+        for lvl in (0.95, 0.99):
+            v, c = var_cvar(pnl, lvl)
+            result[f"{name}_var{int(lvl * 100)}"] = round(v)
+            result[f"{name}_cvar{int(lvl * 100)}"] = round(c)
+    result["real_windows"] = len(pnl_real)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
+    for ax, (name, pnl, color) in zip(
+        axes, [("GBM model (bell curve)", pnl_sim, plots.SERIES[0]),
+               ("Real 1-month windows, 2013–2026", pnl_real, plots.SERIES[1])], strict=True):
+        ax.hist(pnl, bins=np.linspace(-45_000, 45_000, 91), density=True, color=color, alpha=0.85)
+        v, c = var_cvar(pnl, 0.95)
+        ax.axvline(-v, color=plots.TEXT, lw=1.5, ls="--")
+        ax.axvline(-c, color=plots.TEXT, lw=1.5)
+        top = ax.get_ylim()[1]
+        ax.annotate(f"VaR 95%\n−₹{v:,.0f}", (-v, top * 0.8), xytext=(4, 0),
+                    textcoords="offset points", fontsize=9, color=plots.TEXT)
+        ax.annotate(f"CVaR 95%\n−₹{c:,.0f}", (-c, top * 0.55), xytext=(-4, 0), ha="right",
+                    textcoords="offset points", fontsize=9, color=plots.TEXT)
+        c99 = var_cvar(pnl, 0.99)[1]
+        ax.text(0.98, 0.40, f"Worst 1% of months\naverage loss −₹{c99:,.0f}",
+                transform=ax.transAxes, va="top", ha="right", fontsize=9, color=plots.TEXT,
+                bbox={"boxstyle": "round,pad=0.3", "fc": plots.SURFACE, "ec": plots.GRID})
+        ax.set_title(name, fontsize=11)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x / 1000:+.0f}k"))
+        ax.set_yticks([])
+        ax.set_xlabel("Profit / loss in 1 month on ₹1 lakh (₹)")
+    fig.suptitle(f"{sym}: the worst 5% of months, model vs reality", x=0.01, ha="left",
+                 fontsize=13, fontweight="bold")
+    plots.save(fig, out_dir, "risk-var-cvar")
+
+    # Touch vs end below, 3 months, for drops of 5–30%.
+    horizon = 63
+    paths = gbm_paths(s0, 0.0, sigma, horizon, 100_000, seed=12)
+    drops = np.arange(0.05, 0.31, 0.025)
+    touch = [prob_touch(paths, s0 * (1 - d)) for d in drops]
+    end = [prob_end_beyond(paths, s0 * (1 - d)) for d in drops]
+    fig, ax = plt.subplots(figsize=(8, 4.3))
+    ax.plot(drops, touch, color=plots.SERIES[1], marker="o", ms=8,
+            label="Touches that level at any point")
+    ax.plot(drops, end, color=plots.SERIES[0], marker="o", ms=8,
+            label="Is still below it after 3 months")
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"−{x:.0%}"))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0%}"))
+    ax.set_xlabel("Drop from today's price")
+    ax.set_ylabel("Chance within 3 months")
+    ax.set_title(f"{sym}: a stop-loss gets hit about twice as often as you'd guess")
+    ax.legend(loc="upper right")
+    plots.save(fig, out_dir, "risk-touch-vs-end")
+    for d, t, e in zip(drops, touch, end, strict=True):
+        if round(d, 3) in (0.05, 0.1, 0.15, 0.2):
+            result[f"touch_minus{round(d * 100)}pct"] = round(t, 3)
+            result[f"end_minus{round(d * 100)}pct"] = round(e, 3)
+
+    # Does antithetic sampling help for tail risk (VaR 99%) like it does for the mean?
+    exact = capital * (np.exp(-0.5 * sigma**2 * days / TRADING_DAYS
+                              + sigma * np.sqrt(days / TRADING_DAYS) * -2.3263478740) - 1)
+    for anti in (False, True):
+        errs = []
+        for k in range(40):
+            f = gbm_paths(s0, 0.0, sigma, days, 2_000, seed=100 + k, antithetic=anti)[:, -1]
+            errs.append(abs(var_cvar(capital * (f / s0 - 1), 0.99)[0] + exact))
+        result[f"var99_err_2000paths_{'anti' if anti else 'plain'}"] = round(float(np.mean(errs)))
+    result["var99_exact_gbm"] = round(-exact)
+    return result
+
+
+REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk}
 
 
 def main(argv: list[str] | None = None) -> int:
