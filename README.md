@@ -14,7 +14,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
   - Daily prices for RELIANCE, HDFCBANK, INFY, TCS, ITC and NIFTY, 2013–2026, from Yahoo Finance or a local NSE bhavcopy lake.
   - True traded prices are rebuilt from split ratios.
   - Splits and bonuses are detected automatically, so they can't show up as fake crashes.
-- [ ] Return and volatility analytics, including fat-tail diagnostics
+- [x] **Return and volatility analytics.** Simple vs log returns, annualised volatility, a test of the √time scaling rule on real data, and fat-tail diagnostics
 - [ ] GBM path simulation with antithetic variance reduction, plus a drift-uncertainty analysis
 - [ ] Risk measures: VaR, CVaR, and the probability of touching a price vs ending beyond it
 - [ ] Walk-forward coverage testing of each model's forecast bands
@@ -28,6 +28,9 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 |---|---|
 | Unadjusted prices invent crashes | 9 one-day drops of 31–51% across the 5 stocks are splits and bonuses, not losses ([chart](docs/img/data-raw-vs-adjusted.png)) |
 | One missed corporate action corrupts a whole history | A data source that missed ITC's 2016 1:2 bonus reports 0.9%/yr. The real figure is 6.9%/yr. The pipeline flags any adjusted one-day drop over 20% |
+| Log returns are the right unit over time | Averaging daily simple returns says RELIANCE grew 18.8%/yr; it actually grew 15.9%/yr, which daily log returns reproduce exactly |
+| Real returns have fat tails | Under a normal distribution a beyond-4σ day should happen ~0.2 times in 14 years; each stock had 16–22 ([chart](docs/img/returns-vs-normal.png)) |
+| The √time rule holds short-term only | Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months ([chart](docs/img/returns-sqrt-time.png)) |
 | Same market, very different outcomes | ₹1 lakh invested in Jan 2013 became anywhere from ₹2.5L (ITC) to ₹7.8L (RELIANCE). NIFTY, excluding dividends, ended at ₹4.3L |
 
 ## Quick start
@@ -36,6 +39,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 uv sync
 uv run python scripts/fetch_data.py   # prices from Yahoo Finance into data/
 uv run mc-report data                 # charts into out/, key numbers to stdout
+uv run mc-report returns
 uv run pytest
 ```
 
@@ -43,7 +47,7 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern (`data`, `plots`, `reports`, plus the simulation modules as they land).
+- `src/mc/`: one module per concern (`data`, `returns`, `plots`, `reports`, plus the simulation modules as they land).
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
 - Tests use synthetic data with known answers. They never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
 - No market data is committed. Set `MC_LAKE_DIR` to read a local NSE bhavcopy lake (`panel.parquet` and `market.parquet`) instead of Yahoo.
