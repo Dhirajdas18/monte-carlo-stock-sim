@@ -6,7 +6,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 
 > Monte Carlo gives a range of outcomes under a model's assumptions. It is not a price forecast. That is why this project validates every model walk-forward before using it.
 
-![Growth of ₹1 lakh](docs/img/data-growth-of-1-lakh.png)
+![Simulated price paths](docs/img/gbm-fan.png)
 
 ## Features
 
@@ -15,7 +15,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
   - True traded prices are rebuilt from split ratios.
   - Splits and bonuses are detected automatically, so they can't show up as fake crashes.
 - [x] **Return and volatility analytics.** Simple vs log returns, annualised volatility, a test of the √time scaling rule on real data, and fat-tail diagnostics
-- [ ] GBM path simulation with antithetic variance reduction, plus a drift-uncertainty analysis
+- [x] **GBM path simulation.** Validated against closed-form results, with antithetic variance reduction and a drift-uncertainty analysis
 - [ ] Risk measures: VaR, CVaR, and the probability of touching a price vs ending beyond it
 - [ ] Walk-forward coverage testing of each model's forecast bands
 - [ ] Alternative models: Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap
@@ -31,6 +31,9 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 | Log returns are the right unit over time | Averaging daily simple returns says RELIANCE grew 18.8%/yr; it actually grew 15.9%/yr, which daily log returns reproduce exactly |
 | Real returns have fat tails | Under a normal distribution a beyond-4σ day should happen ~0.2 times in 14 years; each stock had 16–22 ([chart](docs/img/returns-vs-normal.png)) |
 | The √time rule holds short-term only | Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months ([chart](docs/img/returns-sqrt-time.png)) |
+| The historical mean return is not a forecast | RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 SE). Plausible drifts move the median 1-year price from ₹1,327 to ₹1,851, so risk simulations use zero drift ([chart](docs/img/gbm-drift-uncertainty.png)) |
+| Volatility drag | At zero drift, 55% of simulated paths end below today's price; the median sits ~3.6%/yr under the mean ([chart](docs/img/gbm-mean-vs-median.png)) |
+| Antithetic sampling pays off | Pairing each draw with its mirror cuts the error of the simulated mean 3–5× at the same path count ([chart](docs/img/gbm-paths-needed.png)) |
 | Same market, very different outcomes | ₹1 lakh invested in Jan 2013 became anywhere from ₹2.5L (ITC) to ₹7.8L (RELIANCE). NIFTY, excluding dividends, ended at ₹4.3L |
 
 ## Quick start
@@ -40,6 +43,7 @@ uv sync
 uv run python scripts/fetch_data.py   # prices from Yahoo Finance into data/
 uv run mc-report data                 # charts into out/, key numbers to stdout
 uv run mc-report returns
+uv run mc-report gbm
 uv run pytest
 ```
 
@@ -47,7 +51,7 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern (`data`, `returns`, `plots`, `reports`, plus the simulation modules as they land).
+- `src/mc/`: one module per concern (`data`, `returns`, `gbm`, `plots`, `reports`, plus the simulation modules as they land).
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
 - Tests use synthetic data with known answers. They never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
 - No market data is committed. Set `MC_LAKE_DIR` to read a local NSE bhavcopy lake (`panel.parquet` and `market.parquet`) instead of Yahoo.

@@ -10,6 +10,7 @@ import pandas as pd
 
 from mc import plots
 from mc.data import INDEX, SYMBOLS, find_splits, growth_of, load_prices
+from mc.gbm import drift_stderr, gbm_closed_form, gbm_paths, mc_error_curve
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
 
 OUT = Path("out")
@@ -191,7 +192,113 @@ def report_returns(out_dir: Path) -> dict:
     return result
 
 
-REPORTS = {"data": report_data, "returns": report_returns}
+def _rupees(v, _=None) -> str:
+    return f"₹{v:,.0f}"
+
+
+def report_gbm(out_dir: Path) -> dict:
+    """GBM baseline: path fan, mean vs median, path count, drift uncertainty."""
+    sym = "RELIANCE"
+    prices = load_prices([sym])[sym]
+    lr = log_returns(prices)
+    s0 = float(prices.iloc[-1])
+    sigma = float(lr.std() * np.sqrt(TRADING_DAYS))
+    mu_hist = float(lr.mean() * TRADING_DAYS + 0.5 * sigma**2)  # GBM drift = mean log return + σ²/2
+    se = drift_stderr(lr)
+    days, n = TRADING_DAYS, 100_000
+    result: dict = {"s0": round(s0, 2), "as_of": f"{prices.index[-1]:%Y-%m-%d}",
+                    "sigma": round(sigma, 4), "mu_hist": round(mu_hist, 4),
+                    "drift_stderr": round(se, 4), "years_of_data": round(len(lr) / TRADING_DAYS, 1)}
+
+    # 1. Fan of paths, drift 0 (see chart 4 for why).
+    paths = gbm_paths(s0, 0.0, sigma, days, n, seed=42)
+    final = paths[:, -1]
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    x = np.arange(days + 1)
+    ax.plot(x, paths[:200].T, color=plots.COLORS[sym], lw=0.6, alpha=0.25)
+    for q, ls in [(5, ":"), (50, "-"), (95, ":")]:
+        band = np.percentile(paths, q, axis=0)
+        ax.plot(x, band, color=plots.TEXT, lw=1.5, ls=ls)
+        plots.label_line_end(ax, days, band[-1], f"{q}th pct ₹{band[-1]:,.0f}", plots.TEXT_2)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.set_xticks([0, 63, 126, 189, 252], ["today", "3 mo", "6 mo", "9 mo", "1 yr"])
+    ax.set_xlim(0, days * 1.3)
+    ax.set_title(f"{sym}: 200 of {n:,} simulated years (GBM, vol {sigma:.0%}, drift 0)")
+    plots.save(fig, out_dir, "gbm-fan")
+    for q in (5, 50, 95):
+        result[f"final_p{q}"] = round(float(np.percentile(final, q)), 0)
+    result["pct_paths_below_start"] = round(float((final < s0).mean()), 3)
+
+    # 2. Mean vs median of the final price.
+    exact = gbm_closed_form(s0, 0.0, sigma, 1.0)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(final, bins=150, range=(0, np.percentile(final, 99.5)), color=plots.COLORS[sym],
+            alpha=0.85)
+    for val, name, ls in [(final.mean(), "Mean", "-"), (np.median(final), "Median", "--")]:
+        ax.axvline(val, color=plots.TEXT, lw=1.5, ls=ls)
+        ax.annotate(f"{name} ₹{val:,.0f}", (val, ax.get_ylim()[1] * 0.92), xytext=(5 if name ==
+                    "Mean" else -5, 0), textcoords="offset points", fontsize=9, color=plots.TEXT,
+                    ha="left" if name == "Mean" else "right")
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.set_yticks([])
+    ax.grid(False)
+    ax.set_title("Price in 1 year: a few huge winners pull the mean above the typical outcome")
+    plots.save(fig, out_dir, "gbm-mean-vs-median")
+    result["sim_mean"] = round(float(final.mean()), 0)
+    result["sim_median"] = round(float(np.median(final)), 0)
+    result["exact_mean"] = round(float(exact["mean"]), 0)
+    result["exact_median"] = round(float(exact["median"]), 0)
+
+    # 3. How many paths is enough? Error vs N, plain vs antithetic.
+    ns = [100, 300, 1_000, 3_000, 10_000, 30_000]
+    plain = mc_error_curve(s0, 0.0, sigma, days, ns, seed=0, repeats=30)
+    anti = mc_error_curve(s0, 0.0, sigma, days, ns, seed=0, antithetic=True, repeats=30)
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(plain.n, plain.abs_error, color=plots.SERIES[0], marker="o", ms=8, label="Plain")
+    ax.plot(anti.n, anti.abs_error, color=plots.SERIES[1], marker="o", ms=8,
+            label="Antithetic (each draw paired with its mirror)")
+    guide = plain.abs_error.iloc[0] * np.sqrt(ns[0] / np.array(ns))
+    ax.plot(ns, guide, color=plots.MUTED, ls="--", lw=1.5,
+            label="1/√N: 100× the paths, 1/10 the error")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.set_xlabel("Number of simulated paths")
+    ax.set_ylabel("Average error in the simulated mean")
+    ax.set_title("More paths, less error, but slowly")
+    ax.legend(loc="lower left")
+    plots.save(fig, out_dir, "gbm-paths-needed")
+    for i, nn in enumerate(ns):
+        result[f"err_plain_{nn}"] = round(float(plain.abs_error.iloc[i]), 1)
+        result[f"err_anti_{nn}"] = round(float(anti.abs_error.iloc[i]), 1)
+
+    # 4. Drift uncertainty: same vol, plausible drifts, very different "forecasts".
+    cases = [("Drift 0", 0.0), (f"Hist. −2 SE ({mu_hist - 2 * se:+.0%})", mu_hist - 2 * se),
+             (f"Historical ({mu_hist:+.0%})", mu_hist), (f"Hist. +2 SE ({mu_hist + 2 * se:+.0%})",
+                                                       mu_hist + 2 * se)]
+    fig, ax = plt.subplots(figsize=(8, 3.8))
+    for i, (_name, mu) in enumerate(cases):
+        f = gbm_paths(s0, mu, sigma, days, 50_000, seed=7)[:, -1]
+        lo, med, hi = np.percentile(f, [5, 50, 95])
+        ax.plot([lo, hi], [i, i], color=plots.SERIES[0], lw=6, solid_capstyle="round", alpha=0.35)
+        ax.plot(med, i, "o", color=plots.SERIES[0], ms=9)
+        ax.text(hi + s0 * 0.03, i, f"median ₹{med:,.0f}", va="center", fontsize=9,
+                color=plots.TEXT)
+        key = ["zero", "minus2se", "hist", "plus2se"][i]
+        result[f"drift_{key}_p5_p50_p95"] = f"{lo:,.0f} / {med:,.0f} / {hi:,.0f}"
+    ax.axvline(s0, color=plots.TEXT_2, lw=1, ls="--")
+    ax.annotate(f"today ₹{s0:,.0f}", (s0, len(cases) - 0.55), xytext=(4, 0),
+                textcoords="offset points", fontsize=9, color=plots.TEXT_2)
+    ax.set_yticks(range(len(cases)), [c[0] for c in cases])
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.set_xlim(right=ax.get_xlim()[1] * 1.12)
+    ax.grid(axis="y", visible=False)
+    ax.set_title("Price in 1 year (5th–95th pct): the drift guess moves the whole answer")
+    plots.save(fig, out_dir, "gbm-drift-uncertainty")
+    return result
+
+
+REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm}
 
 
 def main(argv: list[str] | None = None) -> int:
