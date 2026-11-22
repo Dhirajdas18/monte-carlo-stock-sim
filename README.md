@@ -17,7 +17,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 - [x] **Return and volatility analytics.** Simple vs log returns, annualised volatility, a test of the √time scaling rule on real data, and fat-tail diagnostics
 - [x] **GBM path simulation.** Validated against closed-form results, with antithetic variance reduction and a drift-uncertainty analysis
 - [x] **Risk measures.** VaR and CVaR (simulated vs historical), percentile bands, and the probability of touching a price vs ending beyond it
-- [ ] Walk-forward coverage testing of each model's forecast bands
+- [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead); checked at both the 90% and 99% levels, plus QQ diagnostics
 - [ ] Alternative models: Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap
 - [ ] Correlated portfolio simulation (Cholesky and joint-day bootstrap), with a check on how correlation changes in crashes
 - [ ] Strategy risk: drawdown distributions, the probability that an edge is luck, and Kelly position sizing
@@ -36,6 +36,8 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 | Antithetic sampling pays off | Pairing each draw with its mirror cuts the error of the simulated mean 3–5× at the same path count ([chart](docs/img/gbm-paths-needed.png)) |
 | VaR hides the tail; CVaR doesn't | On ₹1 lakh of RELIANCE for 1 month, historical VaR 95% (₹10.1k) looks safer than the GBM model's (₹12.1k), yet the historical average loss in the worst 1% of months is ₹22.6k vs the model's ₹18.8k ([chart](docs/img/risk-var-cvar.png)) |
 | Stops trigger on touches | A −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time ([chart](docs/img/risk-touch-vs-end.png)) |
+| A model can pass at 90% and fail at 99% | Walk-forward over 2016–2026 (2,636 one-month forecasts per stock), GBM's 90% band holds (90–93% coverage), but its 99% band is breached 2–3× too often, up to 3.5× on the downside ([chart](docs/img/validate-coverage.png)) |
+| Normal-distribution odds of crashes are meaningless | Using only prior data, GBM rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹ and Sep 2018 (−12%) at 1 in 2,358 ([chart](docs/img/validate-worst-months.png)) |
 | Same market, very different outcomes | ₹1 lakh invested in Jan 2013 became anywhere from ₹2.5L (ITC) to ₹7.8L (RELIANCE). NIFTY, excluding dividends, ended at ₹4.3L |
 
 ## Quick start
@@ -47,6 +49,7 @@ uv run mc-report data                 # charts into out/, key numbers to stdout
 uv run mc-report returns
 uv run mc-report gbm
 uv run mc-report risk
+uv run mc-report validate
 uv run pytest
 ```
 
@@ -54,7 +57,7 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern (`data`, `returns`, `gbm`, `risk`, `plots`, `reports`, plus the simulation modules as they land).
+- `src/mc/`: one module per concern (`data`, `returns`, `gbm`, `risk`, `validate`, `plots`, `reports`, plus the simulation modules as they land).
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
 - Tests use synthetic data with known answers. They never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
 - No market data is committed. Set `MC_LAKE_DIR` to read a local NSE bhavcopy lake (`panel.parquet` and `market.parquet`) instead of Yahoo.

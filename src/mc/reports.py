@@ -13,6 +13,7 @@ from mc.data import INDEX, SYMBOLS, find_splits, growth_of, load_prices
 from mc.gbm import drift_stderr, gbm_closed_form, gbm_paths, mc_error_curve
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
 from mc.risk import prob_end_beyond, prob_touch, var_cvar
+from mc.validate import coverage, gbm_model, qq_points
 
 OUT = Path("out")
 
@@ -381,7 +382,116 @@ def report_risk(out_dir: Path) -> dict:
     return result
 
 
-REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk}
+def _odds(months: float) -> str:
+    if months >= 1e6:
+        return f"10^{np.log10(months):.0f} months"
+    return f"{months:,.0f} months"
+
+
+def report_validate(out_dir: Path) -> dict:
+    """Walk-forward coverage of the GBM 90% band, QQ plot, odds of the worst real months."""
+    from scipy import stats
+
+    cols = SYMBOLS + [INDEX]
+    prices = load_prices(cols)
+    lr = log_returns(prices)
+    horizon, window = 21, 756
+    result: dict = {"horizon_days": horizon, "window_days": window, "band": "90%"}
+
+    # 1. QQ plot.
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    lim = 0
+    for c in ["RELIANCE", INDEX]:
+        theo, z = qq_points(lr[c])
+        ax.plot(theo, z, "o", ms=3, color=plots.COLORS[c], alpha=0.6, label=c)
+        lim = max(lim, np.abs(z).max())
+    ax.plot([-4.5, 4.5], [-4.5, 4.5], color=plots.TEXT_2, lw=1.2, ls="--",
+            label="Perfect bell curve")
+    ax.set_xlim(-4.5, 4.5)
+    ax.set_ylim(-lim * 1.05, lim * 1.05)
+    ax.set_xlabel("Where the day would sit on a bell curve (σ)")
+    ax.set_ylabel("Where the real day sits (σ)")
+    ax.set_title("Bell curve vs reality: the ends bend away")
+    ax.legend(loc="upper left")
+    plots.save(fig, out_dir, "validate-qq")
+
+    # 2. Walk-forward coverage: every day, fit on the past 3 years, predict a 90% band 1 month out.
+    covs = {}
+    for c in cols:
+        cov = coverage(prices[c], gbm_model, horizon=horizon, window=window, step=1,
+                       n_paths=2000, seed=0)
+        covs[c] = cov
+        below = (cov["actual"] < cov["lo"]).mean()
+        above = (cov["actual"] > cov["hi"]).mean()
+        result[f"{c}_coverage"] = round(float(cov["hit"].mean()), 3)
+        result[f"{c}_miss_below"] = round(float(below), 3)
+        result[f"{c}_miss_above"] = round(float(above), 3)
+        c99 = coverage(prices[c], gbm_model, horizon=horizon, window=window, step=1,
+                       level=0.99, n_paths=4000, seed=1)
+        result[f"{c}_miss_99band"] = round(float(1 - c99["hit"].mean()), 4)
+        result[f"{c}_miss_99band_below"] = round(float((c99["actual"] < c99["lo"]).mean()), 4)
+    result["forecasts_per_stock"] = len(covs[INDEX])
+
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ends = {}
+    for c in ["RELIANCE", INDEX]:
+        roll = covs[c]["hit"].astype(float).rolling(252).mean()
+        ax.plot(roll.index, roll, color=plots.COLORS[c], lw=2)
+        ends[c] = (roll.index[-1], roll.iloc[-1])
+    (x1, y1), (x2, y2) = ends["RELIANCE"], ends[INDEX]
+    if abs(y1 - y2) < 0.03:
+        y1, y2 = max(y1, y2) + 0.015, min(y1, y2) - 0.015
+    plots.label_line_end(ax, x1, y1, "RELIANCE", plots.COLORS["RELIANCE"])
+    plots.label_line_end(ax, x2, y2, INDEX, plots.COLORS[INDEX])
+    ax.axhline(0.90, color=plots.TEXT, lw=1.2, ls="--")
+    ax.annotate("Promised: 90%", (covs[INDEX].index[700], 0.90), xytext=(0, -14),
+                textcoords="offset points", fontsize=9, color=plots.TEXT,
+                bbox={"boxstyle": "round,pad=0.15", "fc": plots.SURFACE, "ec": "none"})
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.set_xlim(right=covs[INDEX].index[-1] + pd.Timedelta(days=420))
+    ax.set_ylabel("Share of forecasts that landed in the band")
+    ax.set_title("How often reality landed inside the model's 90% band (rolling 1 year)")
+    plots.save(fig, out_dir, "validate-coverage")
+
+    # 3. Worst real months: how rare did the model, using the vol it knew then, think they were?
+    logp = np.log(prices[INDEX])
+    move = logp.shift(-horizon) - logp
+    picked: list = []
+    for d in move.sort_values().index:
+        if all(abs((d - q).days) > 60 for q in picked) and logp.index.get_loc(d) >= window:
+            picked.append(d)
+        if len(picked) == 5:
+            break
+    rows = []
+    for d in picked:
+        i = logp.index.get_loc(d)
+        sd = lr[INDEX].iloc[i - window : i].std()
+        m = move.loc[d]
+        z = (m + 0.5 * sd**2 * horizon) / (sd * np.sqrt(horizon))
+        prob = stats.norm.cdf(z)
+        rows.append((d, np.expm1(m), prob))
+        result[f"worst_{d:%Y-%m-%d}"] = f"{np.expm1(m):+.1%}, model odds 1 in {_odds(1 / prob)}"
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    labels = [f"{d:%b %Y}  ({r:+.0%})" for d, r, _ in rows]
+    odds = [1 / pr for _, _, pr in rows]
+    ax.barh(labels[::-1], odds[::-1], color=plots.COLORS[INDEX], height=0.55)
+    ax.set_xscale("log")
+    for i, o in enumerate(odds[::-1]):
+        yrs = o / 12
+        note = ("longer than the age of the universe" if yrs > 1.4e10
+                else f"≈ once in {yrs:,.0f} years" if yrs >= 2 else "a normal bad month")
+        ax.text(o * 1.6, i, f"1 in {_odds(o)}  ({note})", va="center", fontsize=9, color=plots.TEXT)
+    ax.set_xlim(1, max(odds) ** 1.35)
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("How rare the bell-curve model thought this month was (log scale)")
+    ax.set_title("NIFTY's 5 worst months, as the model saw them beforehand")
+    plots.save(fig, out_dir, "validate-worst-months")
+    return result
+
+
+REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk,
+           "validate": report_validate}
 
 
 def main(argv: list[str] | None = None) -> int:
