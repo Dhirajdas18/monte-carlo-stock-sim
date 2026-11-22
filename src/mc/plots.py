@@ -22,6 +22,8 @@ COLORS = {
     "NIFTY": SERIES[5],
 }
 MUTED = "#a3a29c"
+# Sequential blue ramp (light to dark) for magnitudes such as correlation.
+BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
 
 
 def style() -> None:

@@ -12,6 +12,12 @@ from mc import plots
 from mc.data import INDEX, SYMBOLS, find_splits, growth_of, load_prices
 from mc.gbm import drift_stderr, gbm_closed_form, gbm_paths, mc_error_curve
 from mc.models import MODELS
+from mc.portfolio import (
+    bootstrap_days_paths,
+    calm_vs_crash_corr,
+    correlated_gbm_paths,
+    portfolio_value,
+)
 from mc.returns import TRADING_DAYS, annualise, log_returns, simple_returns, tail_stats
 from mc.risk import prob_end_beyond, prob_touch, var_cvar
 from mc.validate import coverage, gbm_model, qq_points
@@ -570,8 +576,102 @@ def report_models(out_dir: Path) -> dict:
     return result
 
 
+def report_portfolio(out_dir: Path) -> dict:
+    """Correlation, basket vs single stock under three methods, calm vs crash correlation."""
+    from matplotlib.colors import LinearSegmentedColormap
+
+    prices = load_prices(SYMBOLS + [INDEX])
+    lr = log_returns(prices)
+    stocks = lr[SYMBOLS]
+    corr = stocks.corr()
+    sigma = stocks.std().to_numpy() * np.sqrt(TRADING_DAYS)
+    s0 = prices[SYMBOLS].iloc[-1].to_numpy()
+    capital, days, n = 500_000, 21, 100_000
+    w = np.full(len(SYMBOLS), 1 / len(SYMBOLS))
+    cmap = LinearSegmentedColormap.from_list("blue", plots.BLUE_RAMP)
+    result: dict = {"capital": capital, "horizon_days": days}
+
+    # 1. Correlation heatmap.
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(corr, cmap=cmap, vmin=0, vmax=1)
+    ax.set_xticks(range(5), SYMBOLS, rotation=30, ha="right")
+    ax.set_yticks(range(5), SYMBOLS)
+    ax.grid(False)
+    for i in range(5):
+        for j in range(5):
+            v = corr.iat[i, j]
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=10,
+                    color=plots.SURFACE if v > 0.6 else plots.TEXT)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Correlation of daily moves")
+    ax.set_title("How much the 5 stocks move together")
+    plots.save(fig, out_dir, "portfolio-correlation")
+    pairs = [(a, b) for i, a in enumerate(SYMBOLS) for b in SYMBOLS[i + 1 :]]
+    result["avg_pair_corr"] = round(float(np.mean([corr.loc[a, b] for a, b in pairs])), 3)
+
+    # 2. ₹5 lakh: one stock vs equal-weight basket, three ways of simulating the basket.
+    indep = correlated_gbm_paths(s0, sigma, np.eye(5), days, n, seed=21)
+    chol = correlated_gbm_paths(s0, sigma, corr.to_numpy(), days, n, seed=22)
+    boot = bootstrap_days_paths(stocks, s0, days, n, seed=23, block=20)
+    cases = {
+        "One stock (RELIANCE), real days replayed":
+            capital * (boot[:, -1, 0] / s0[0] - 1),
+        "Basket: stocks independent": portfolio_value(indep, w, capital)[:, -1] - capital,
+        "Basket: correlated (Cholesky, bell curve)":
+            portfolio_value(chol, w, capital)[:, -1] - capital,
+        "Basket: real days replayed together": portfolio_value(boot, w, capital)[:, -1] - capital,
+    }
+    keys = ["single", "independent", "cholesky", "joint_bootstrap"]
+    losses = []
+    for key, (_label, pnl) in zip(keys, cases.items(), strict=True):
+        v95, c95 = var_cvar(pnl, 0.95)
+        c99 = var_cvar(pnl, 0.99)[1]
+        losses.append(c99)
+        result[f"{key}_var95"] = round(v95)
+        result[f"{key}_cvar95"] = round(c95)
+        result[f"{key}_cvar99"] = round(c99)
+    fig, ax = plt.subplots(figsize=(8.5, 3.6))
+    colors = [plots.COLORS["RELIANCE"], plots.MUTED, plots.SERIES[6], plots.SERIES[1]]
+    labels = list(cases)
+    ax.barh(labels[::-1], losses[::-1], color=colors[::-1], height=0.55)
+    for i, v in enumerate(losses[::-1]):
+        ax.text(v + capital * 0.003, i, f"−₹{v:,.0f}  ({v / capital:.1%})", va="center",
+                fontsize=9, color=plots.TEXT)
+    ax.set_xlim(0, max(losses) * 1.35)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(_rupees))
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Average loss in the worst 1% of months, ₹5 lakh")
+    ax.set_title("Diversification is real, but ignoring correlation overstates it")
+    plots.save(fig, out_dir, "portfolio-basket-risk")
+
+    # 3. Correlation on calm days vs NIFTY's worst 10% of days.
+    calm, crash = calm_vs_crash_corr(lr, market=INDEX, q=0.10)
+    calm_v = [calm.loc[a, b] for a, b in pairs]
+    crash_v = [crash.loc[a, b] for a, b in pairs]
+    order = np.argsort(crash_v)
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    for k, idx in enumerate(order):
+        ax.plot([calm_v[idx], crash_v[idx]], [k, k], color=plots.GRID, lw=3, zorder=1)
+    ax.plot([calm_v[i] for i in order], range(len(order)), "o", ms=9, color=plots.MUTED,
+            label="Normal days", zorder=2)
+    ax.plot([crash_v[i] for i in order], range(len(order)), "o", ms=9, color=plots.SERIES[7],
+            label="NIFTY's worst 10% of days", zorder=3)
+    ax.set_yticks(range(len(order)), [f"{pairs[i][0]} – {pairs[i][1]}" for i in order])
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Correlation of daily moves")
+    ax.set_title("On bad days, stocks move together more")
+    ax.legend(loc="lower right")
+    plots.save(fig, out_dir, "portfolio-crash-correlation")
+    result["avg_corr_calm"] = round(float(np.mean(calm_v)), 3)
+    result["avg_corr_crash"] = round(float(np.mean(crash_v)), 3)
+    basket_vol = float(np.sqrt(w @ (stocks.cov().to_numpy() * TRADING_DAYS) @ w))
+    result["avg_single_vol"] = round(float(sigma.mean()), 3)
+    result["basket_vol"] = round(basket_vol, 3)
+    result["nifty_vol"] = round(float(lr[INDEX].std() * np.sqrt(TRADING_DAYS)), 3)
+    return result
+
+
 REPORTS = {"data": report_data, "returns": report_returns, "gbm": report_gbm, "risk": report_risk,
-           "validate": report_validate, "models": report_models}
+           "validate": report_validate, "models": report_models, "portfolio": report_portfolio}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -16,7 +16,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 - [x] **Risk measures.** VaR and CVaR (simulated vs historical), percentile bands, and the probability of touching a price vs ending beyond it.
 - [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead), and is checked at both the 90% and 99% levels.
 - [x] **Alternative models.** Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap, all compared on the same walk-forward test.
-- [ ] Correlated portfolio simulation (Cholesky and joint-day bootstrap), with a check on how correlation changes in crashes
+- [x] **Correlated portfolio simulation.** Cholesky and joint-day block bootstrap, buy-and-hold portfolios, and calm vs crash-day correlation.
 - [ ] Strategy risk: drawdown distributions, the probability that an edge is luck, and Kelly position sizing
 
 ## Findings
@@ -81,6 +81,17 @@ No model fixes the walk-forward 99% misses. Those come from volatility regime sh
 <td><a href="docs/img/models-coverage.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/models-coverage.png"><img src="docs/img/models-coverage.gif" alt="Walk-forward 99% coverage per model"></picture></a></td>
 </tr></table>
 
+### 7. Diversification is real, but simple models overstate it
+
+On ₹5 lakh, holding one stock (RELIANCE) loses ₹1.14L (22.9%) on average in the worst 1% of months. An equal-weight basket of the 5 cuts that to ₹88k (17.6%) when real days are replayed with all 5 stocks together. Treating the stocks as independent claims ₹42k (8.4%), and a correlation matrix with bell-curve moves claims ₹60k (12.0%): both make the basket look 2–3× safer than history says. The reason is crash days. Every one of the 10 stock pairs moves together more on NIFTY's worst 10% of days (average correlation 0.18 → 0.25), so protection thins out exactly when it's needed.
+
+<a href="docs/img/portfolio-basket-risk.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/portfolio-basket-risk.png"><img src="docs/img/portfolio-basket-risk.gif" alt="Basket vs single-stock tail loss under three methods"></picture></a>
+
+<table><tr>
+<td><a href="docs/img/portfolio-correlation.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/portfolio-correlation.png"><img src="docs/img/portfolio-correlation.gif" alt="Correlation heatmap of the 5 stocks"></picture></a></td>
+<td><a href="docs/img/portfolio-crash-correlation.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/portfolio-crash-correlation.png"><img src="docs/img/portfolio-crash-correlation.gif" alt="Correlation on normal vs crash days"></picture></a></td>
+</tr></table>
+
 ## Quick start
 
 ```bash
@@ -92,6 +103,7 @@ uv run mc-report gbm
 uv run mc-report risk
 uv run mc-report validate
 uv run mc-report models
+uv run mc-report portfolio
 uv run pytest
 ```
 
@@ -99,7 +111,7 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `plots`, `reports`.
+- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `portfolio`, `plots`, `reports`.
 - Every model shares one interface, `model(past_log_returns, s0, days, n_paths, rng) -> paths`, so any model can go through the same walk-forward test.
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
 - Tests use synthetic data with known answers and never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
