@@ -2,43 +2,84 @@
 
 ![CI](https://github.com/Dhirajdas18/monte-carlo-stock-sim/actions/workflows/ci.yml/badge.svg)
 
-A Monte Carlo risk engine for Indian equities. It simulates price paths for single stocks, correlated portfolios and trading-strategy returns. Before trusting any model, it checks the model's forecasts against real NSE history.
+A Monte Carlo risk engine for Indian equities. It simulates price paths for single stocks, correlated portfolios and trading-strategy returns. Before trusting any model, it checks the model's forecasts against real NSE history (RELIANCE, HDFCBANK, INFY, TCS, ITC and NIFTY, 2013–2026).
 
-> Monte Carlo gives a range of outcomes under a model's assumptions. It is not a price forecast. That is why this project validates every model walk-forward before using it.
+> Monte Carlo gives a range of outcomes under a model's assumptions. It is not a price forecast. That is why every model here is validated walk-forward before it's used.
 
 ![Simulated price paths](docs/img/gbm-fan.png)
 
 ## Features
 
-- [x] **Data pipeline with corporate-action checks.**
-  - Daily prices for RELIANCE, HDFCBANK, INFY, TCS, ITC and NIFTY, 2013–2026, from Yahoo Finance or a local NSE bhavcopy lake.
-  - True traded prices are rebuilt from split ratios.
-  - Splits and bonuses are detected automatically, so they can't show up as fake crashes.
-- [x] **Return and volatility analytics.** Simple vs log returns, annualised volatility, a test of the √time scaling rule on real data, and fat-tail diagnostics
-- [x] **GBM path simulation.** Validated against closed-form results, with antithetic variance reduction and a drift-uncertainty analysis
-- [x] **Risk measures.** VaR and CVaR (simulated vs historical), percentile bands, and the probability of touching a price vs ending beyond it
-- [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead); checked at both the 90% and 99% levels, plus QQ diagnostics
-- [ ] Alternative models: Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap
+- [x] **Data pipeline with corporate-action checks.** Yahoo Finance or a local NSE bhavcopy lake. True traded prices are rebuilt from split ratios, and splits and bonuses are detected automatically.
+- [x] **Return and volatility analytics.** Simple vs log returns, annualised volatility, a test of √time scaling on real data, and fat-tail diagnostics.
+- [x] **GBM path simulation.** Vectorised and seeded, validated against closed-form results, with antithetic variance reduction and a drift-uncertainty analysis.
+- [x] **Risk measures.** VaR and CVaR (simulated vs historical), percentile bands, and the probability of touching a price vs ending beyond it.
+- [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead), and is checked at both the 90% and 99% levels.
+- [x] **Alternative models.** Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap, all compared on the same walk-forward test.
 - [ ] Correlated portfolio simulation (Cholesky and joint-day bootstrap), with a check on how correlation changes in crashes
 - [ ] Strategy risk: drawdown distributions, the probability that an edge is luck, and Kelly position sizing
 
-## Findings so far
+## Findings
 
-| Finding | Evidence |
-|---|---|
-| Unadjusted prices invent crashes | 9 one-day drops of 31–51% across the 5 stocks are splits and bonuses, not losses ([chart](docs/img/data-raw-vs-adjusted.png)) |
-| One missed corporate action corrupts a whole history | A data source that missed ITC's 2016 1:2 bonus reports 0.9%/yr. The real figure is 6.9%/yr. The pipeline flags any adjusted one-day drop over 20% |
-| Log returns are the right unit over time | Averaging daily simple returns says RELIANCE grew 18.8%/yr; it actually grew 15.9%/yr, which daily log returns reproduce exactly |
-| Real returns have fat tails | Under a normal distribution a beyond-4σ day should happen ~0.2 times in 14 years; each stock had 16–22 ([chart](docs/img/returns-vs-normal.png)) |
-| The √time rule holds short-term only | Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months ([chart](docs/img/returns-sqrt-time.png)) |
-| The historical mean return is not a forecast | RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 SE). Plausible drifts move the median 1-year price from ₹1,327 to ₹1,851, so risk simulations use zero drift ([chart](docs/img/gbm-drift-uncertainty.png)) |
-| Volatility drag | At zero drift, 55% of simulated paths end below today's price; the median sits ~3.6%/yr under the mean ([chart](docs/img/gbm-mean-vs-median.png)) |
-| Antithetic sampling pays off | Pairing each draw with its mirror cuts the error of the simulated mean 3–5× at the same path count ([chart](docs/img/gbm-paths-needed.png)) |
-| VaR hides the tail; CVaR doesn't | On ₹1 lakh of RELIANCE for 1 month, historical VaR 95% (₹10.1k) looks safer than the GBM model's (₹12.1k), yet the historical average loss in the worst 1% of months is ₹22.6k vs the model's ₹18.8k ([chart](docs/img/risk-var-cvar.png)) |
-| Stops trigger on touches | A −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time ([chart](docs/img/risk-touch-vs-end.png)) |
-| A model can pass at 90% and fail at 99% | Walk-forward over 2016–2026 (2,636 one-month forecasts per stock), GBM's 90% band holds (90–93% coverage), but its 99% band is breached 2–3× too often, up to 3.5× on the downside ([chart](docs/img/validate-coverage.png)) |
-| Normal-distribution odds of crashes are meaningless | Using only prior data, GBM rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹ and Sep 2018 (−12%) at 1 in 2,358 ([chart](docs/img/validate-worst-months.png)) |
-| Same market, very different outcomes | ₹1 lakh invested in Jan 2013 became anywhere from ₹2.5L (ITC) to ₹7.8L (RELIANCE). NIFTY, excluding dividends, ended at ₹4.3L |
+### 1. Unadjusted prices invent crashes
+
+The 5 stocks show 9 one-day drops of 31–51% in raw prices. Every one is a split or bonus issue, not a loss. A data source that missed one ITC bonus reports 0.9%/yr; the real figure is 6.9%/yr. The pipeline flags any adjusted one-day drop over 20%.
+
+<table><tr>
+<td><img src="docs/img/data-raw-vs-adjusted.png" alt="Raw vs adjusted price around a split"></td>
+<td><img src="docs/img/data-growth-of-1-lakh.png" alt="Growth of ₹1 lakh since 2013"></td>
+</tr></table>
+
+### 2. Real returns have fat tails, and √time only holds short-term
+
+Under a normal distribution, a day beyond 4σ should happen about 0.2 times in 14 years. Each stock had 16–22. Scaling daily volatility by √days matches realised volatility to within ~5% up to 1 month, but overstates it by 5–30% at 3–12 months.
+
+<table><tr>
+<td><img src="docs/img/returns-vs-normal.png" alt="Daily returns vs the normal curve"></td>
+<td><img src="docs/img/returns-sqrt-time.png" alt="Square-root-of-time check"></td>
+</tr></table>
+
+### 3. The historical mean return is not a forecast
+
+RELIANCE's 13.6-year drift is 18.7%/yr ± 7.3% (1 standard error). Plausible drifts move the median 1-year price from ₹1,327 to ₹1,851, so risk simulations default to zero drift. Even at zero drift, 55% of paths end below today's price (volatility drag). Antithetic sampling cuts the error of the simulated mean 3–5× at the same path count.
+
+![Drift uncertainty](docs/img/gbm-drift-uncertainty.png)
+
+<table><tr>
+<td><img src="docs/img/gbm-mean-vs-median.png" alt="Mean vs median final price"></td>
+<td><img src="docs/img/gbm-paths-needed.png" alt="Error vs number of paths"></td>
+</tr></table>
+
+### 4. VaR hides the tail; CVaR doesn't
+
+On ₹1 lakh of RELIANCE over 1 month, historical VaR 95% (₹10.1k) looks safer than the GBM model's (₹12.1k). Yet the historical average loss in the worst 1% of months is ₹22.6k, against the model's ₹18.8k. Stop-losses trigger on touches: a −10% level is touched within 3 months 41% of the time but is still breached at the end only 24% of the time.
+
+<table><tr>
+<td><img src="docs/img/risk-var-cvar.png" alt="VaR and CVaR, model vs history"></td>
+<td><img src="docs/img/risk-touch-vs-end.png" alt="Touch vs end probabilities"></td>
+</tr></table>
+
+### 5. A model can pass at 90% and fail at 99%
+
+This is a walk-forward test over 2016–2026: 2,636 one-month forecasts per stock, each made using only the 3 years before it. GBM's 90% band holds (90–93% coverage). Its 99% band is breached 2–3× too often, and up to 3.5× on the downside. Its sense of risk also lags: coverage fell to ~70% in 2020 and sat near 100% in 2021–23. Using only prior data, it rated NIFTY's Feb–Mar 2020 month (−37%) at 1 in 10³⁹.
+
+<table><tr>
+<td><img src="docs/img/validate-coverage.png" alt="Rolling coverage of the 90% band"></td>
+<td><img src="docs/img/validate-worst-months.png" alt="Model odds of the worst real months"></td>
+</tr></table>
+
+### 6. Only the block bootstrap gets the depth of a bad month right
+
+Five models were compared on the same data. For the average loss in the worst 1% of months, the block bootstrap gives ₹23.0k (RELIANCE) and ₹20.5k (NIFTY), against real values of ₹22.8k and ₹20.75k. Every other model understates it, GBM on NIFTY by 43%.
+
+Resampling single days (plain bootstrap) barely beats GBM. Over a month, independent fat-tailed days average out. It's bad days *clustering together* that makes monthly tails fat.
+
+No model fixes the walk-forward 99% misses. Those come from volatility regime shifts, not the shape of the distribution.
+
+<table><tr>
+<td><img src="docs/img/models-tail.png" alt="Tail depth per model"></td>
+<td><img src="docs/img/models-coverage.png" alt="Walk-forward 99% coverage per model"></td>
+</tr></table>
 
 ## Quick start
 
@@ -50,6 +91,7 @@ uv run mc-report returns
 uv run mc-report gbm
 uv run mc-report risk
 uv run mc-report validate
+uv run mc-report models
 uv run pytest
 ```
 
@@ -57,9 +99,10 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern (`data`, `returns`, `gbm`, `risk`, `validate`, `plots`, `reports`, plus the simulation modules as they land).
+- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `plots`, `reports`.
+- Every model shares one interface, `model(past_log_returns, s0, days, n_paths, rng) -> paths`, so any model can go through the same walk-forward test.
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
-- Tests use synthetic data with known answers. They never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
+- Tests use synthetic data with known answers and never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
 - No market data is committed. Set `MC_LAKE_DIR` to read a local NSE bhavcopy lake (`panel.parquet` and `market.parquet`) instead of Yahoo.
 
 Stack: Python 3.12 · uv · NumPy · pandas · SciPy · Matplotlib · pytest · GitHub Actions.
