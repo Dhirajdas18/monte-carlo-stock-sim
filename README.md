@@ -1,8 +1,15 @@
 # Monte Carlo Stock Simulator (NSE)
 
 ![CI](https://github.com/Dhirajdas18/monte-carlo-stock-sim/actions/workflows/ci.yml/badge.svg)
+[![Dashboard](https://github.com/Dhirajdas18/monte-carlo-stock-sim/actions/workflows/pages.yml/badge.svg)](https://dhirajdas18.github.io/monte-carlo-stock-sim/)
 
 A Monte Carlo risk engine for Indian equities. It simulates price paths for single stocks, correlated portfolios and trading-strategy returns. Before trusting any model, it checks the model's forecasts against real NSE history (RELIANCE, HDFCBANK, INFY, TCS, ITC and NIFTY, 2013–2026).
+
+**Live simulator: [dhirajdas18.github.io/monte-carlo-stock-sim](https://dhirajdas18.github.io/monte-carlo-stock-sim/)**.
+Pick a stock or NIFTY, one of the five models, how much history it learns from, a horizon and a rupee
+amount: the page simulates 2,000 futures and shows the fan of outcomes, VaR and CVaR, and the chance of
+touching a loss level against ending below it, for all five models side by side. It runs in your browser
+on daily returns since 2013, rebuilt weekly.
 
 > Monte Carlo gives a range of outcomes under a model's assumptions. It is not a price forecast. That is why every model here is validated walk-forward before it's used.
 
@@ -17,6 +24,7 @@ A Monte Carlo risk engine for Indian equities. It simulates price paths for sing
 - [x] **Walk-forward coverage testing.** Each forecast uses only past data (tested for look-ahead), and is checked at both the 90% and 99% levels.
 - [x] **Alternative models.** Student-t, Merton jump-diffusion, historical bootstrap and block bootstrap, all compared on the same walk-forward test.
 - [x] **Correlated portfolio simulation.** Cholesky and joint-day block bootstrap, buy-and-hold portfolios, and calm vs crash-day correlation.
+- [x] **In-browser simulator.** The five models' step rules in JavaScript (settings fitted in Python), tested against the Python through Node; one static page on GitHub Pages.
 - [x] **Strategy risk.** Resampled equity curves, drawdown distributions, the probability that an edge is luck, and Kelly position sizing.
 
 ## Findings
@@ -135,6 +143,7 @@ uv run mc-report validate
 uv run mc-report models
 uv run mc-report portfolio
 uv run mc-report strategy
+uv run python scripts/build_site.py   # the simulator page into site/
 uv run pytest
 ```
 
@@ -142,12 +151,13 @@ All randomness is seeded, so every reported number can be reproduced.
 
 ## Design
 
-- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `portfolio`, `strategy`, `plots`, `reports`.
+- `src/mc/`: one module per concern: `data`, `returns`, `gbm`, `risk`, `validate`, `models`, `portfolio`, `strategy`, `plots`, `reports`, `site`.
+- `src/mc/sim.js`, `simulator.html`, `page.html`: the dashboard. Python fits each model's settings per stock and history window (`site.model_params`, the same formulas as `models`); the browser simulates with the same step rules, and a test runs the JavaScript through Node against the Python. Daily log returns are embedded as integers (0.001% units).
 - Every model shares one interface, `model(past_log_returns, s0, days, n_paths, rng) -> paths`, so any model can go through the same walk-forward test.
 - `mc-report <topic>` regenerates a topic's charts and numbers from raw data, so nothing in this README is typed by hand.
-- Tests use synthetic data with known answers and never depend on downloaded files. CI runs `ruff` and `pytest` on every push.
+- Tests use synthetic data with known answers and never depend on downloaded files. CI runs `ruff` and `pytest` on every push; a second workflow fetches prices, rebuilds the page and publishes it to GitHub Pages weekly.
 - No market data is committed. Set `MC_LAKE_DIR` to read a local NSE bhavcopy lake (`panel.parquet` and `market.parquet`) instead of Yahoo.
 
-Stack: Python 3.12 · uv · NumPy · pandas · SciPy · Matplotlib · pytest · GitHub Actions.
+Stack: Python 3.12 · uv · NumPy · pandas · SciPy · Matplotlib · Plotly.js · pytest · GitHub Actions.
 
 MIT licence.

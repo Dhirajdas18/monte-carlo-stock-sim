@@ -1,0 +1,81 @@
+<form class="calc" id="mc" onsubmit="return false">
+  <label>Stock <select id="mc-sym"></select></label>
+  <label>Model <select id="mc-model">
+    <option value="gbm">GBM (normal)</option><option value="t">Student-t</option><option value="jump">Jump-diffusion</option>
+    <option value="bootstrap">Bootstrap</option><option value="block" selected>Block bootstrap</option>
+  </select></label>
+  <label>Learns from <select id="mc-win">
+    <option value="3y">last 3 years</option><option value="5y" selected>last 5 years</option><option value="all">since 2013</option>
+  </select></label>
+  <label>Horizon <select id="mc-days">
+    <option value="21">1 month</option><option value="63" selected>3 months</option><option value="126">6 months</option><option value="252">1 year</option>
+  </select></label>
+  <label>Amount, ₹ <input id="mc-amt" type="number" min="1000" step="1000" value="100000" inputmode="numeric" autocomplete="off"></label>
+  <label>Loss level, % <input id="mc-bar" type="number" min="1" max="90" step="1" value="20" inputmode="numeric" autocomplete="off"></label>
+</form>
+<p class="note" id="mc-note" aria-live="polite"></p>
+<div id="mc-chart" class="sim-chart" role="img" aria-label="Fan of simulated values for the chosen stock and model"></div>
+<h3>All five models, same settings</h3>
+<div class="table-scroll"><table class="data">
+  <thead><tr><th scope="col">Model</th><th scope="col">Typical end</th><th scope="col">5th–95th pct</th><th scope="col">95% VaR</th><th scope="col">95% CVaR</th><th scope="col">Ends down</th><th scope="col" id="mc-touch-h">Touches the loss level</th><th scope="col" id="mc-end-h">Ends below it</th></tr></thead>
+  <tbody id="mc-out"></tbody>
+</table></div>
+<script>
+$js
+const MC = $data;
+(() => {
+  const PATHS = 2000, SCALE = 1e-5, el = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const NAMES = { gbm: "GBM (normal)", t: "Student-t", jump: "Jump-diffusion", bootstrap: "Bootstrap", block: "Block bootstrap" };
+  el("mc-sym").innerHTML = MC.names.map((s) => `<option value="${s}">${s}</option>`).join("");
+  const rupees = (x) => "₹" + Math.round(x).toLocaleString("en-IN");
+  const pct = (x) => (x * 100).toFixed(1) + "%";
+  const update = () => {
+    const sym = el("mc-sym").value, win = el("mc-win").value, days = parseInt(el("mc-days").value, 10);
+    const amt = parseFloat(el("mc-amt").value), bar = parseFloat(el("mc-bar").value) / 100;
+    if (!(amt > 0 && bar > 0 && bar < 1)) { el("mc-note").textContent = "Enter an amount above ₹0 and a loss level between 1% and 90%."; el("mc-out").innerHTML = ""; return; }
+    const p = MC.params[sym][win], all = MC.r[sym].map((x) => x * SCALE);
+    const hist = win === "all" ? all : all.slice(-p.n);
+    el("mc-touch-h").textContent = `Touches −${Math.round(bar * 100)}%`;
+    el("mc-end-h").textContent = `Ends below −${Math.round(bar * 100)}%`;
+    let chosen;
+    el("mc-out").innerHTML = Object.keys(NAMES).map((model) => {
+      const paths = simulate(model, p, hist, amt, days, PATHS, 7);
+      if (model === el("mc-model").value) chosen = paths;
+      const end = paths.map((x) => x[days]).sort((a, b) => a - b);
+      const [v, cv] = varCvar(end.map((x) => x - amt), 0.95);
+      const pick = model === el("mc-model").value;
+      return `<tr${pick ? ' class="pick"' : ""}><th scope="row">${NAMES[model]}${pick ? " (shown)" : ""}</th>` +
+        `<td>${rupees(quantile(end, 0.5))}</td><td>${rupees(quantile(end, 0.05))} – ${rupees(quantile(end, 0.95))}</td>` +
+        `<td>${rupees(v)}</td><td>${rupees(cv)}</td><td>${pct(end.filter((x) => x < amt).length / PATHS)}</td>` +
+        `<td>${pct(probTouch(paths, amt * (1 - bar)))}</td><td>${pct(probEnd(paths, amt * (1 - bar)))}</td></tr>`;
+    }).join("");
+    el("mc-note").textContent = `${NAMES[el("mc-model").value]} learned from ${hist.length.toLocaleString("en-IN")} trading days of ${sym} ` +
+      `(daily volatility ${pct(p.sd)}); ${PATHS.toLocaleString("en-IN")} simulated futures of ${rupees(amt)}, prices to ${MC.asof}.`;
+    const step = Math.max(1, Math.round(days / 120)), xs = [], bands = [[], [], [], [], []];
+    for (let t = 0; t <= days; t += step) {
+      const col = chosen.map((x) => x[t]).sort((a, b) => a - b);
+      xs.push(t); [0.05, 0.25, 0.5, 0.75, 0.95].forEach((q, i) => bands[i].push(quantile(col, q)));
+    }
+    const acc = css("--accent"), muted = css("--muted");
+    const samples = chosen.slice(0, 10).map((x, i) => ({ x: xs, y: xs.map((t) => x[t]), mode: "lines", line: { color: muted, width: 1 },
+      opacity: 0.55, hoverinfo: "skip", showlegend: i === 0, name: "single futures" }));
+    Plotly.react("mc-chart", [
+      { x: xs, y: bands[4], mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
+      { x: xs, y: bands[0], mode: "lines", line: { width: 0 }, fill: "tonexty", fillcolor: acc + "1f", name: "5th–95th percentile", hovertemplate: "day %{x}: 5th percentile ₹%{y:,.0f}<extra></extra>" },
+      { x: xs, y: bands[3], mode: "lines", line: { width: 0 }, hoverinfo: "skip", showlegend: false },
+      { x: xs, y: bands[1], mode: "lines", line: { width: 0 }, fill: "tonexty", fillcolor: acc + "40", name: "25th–75th percentile", hovertemplate: "day %{x}: 25th percentile ₹%{y:,.0f}<extra></extra>" },
+      ...samples,
+      { x: xs, y: bands[2], mode: "lines", line: { color: acc, width: 2.5 }, name: "median", hovertemplate: "day %{x}: median ₹%{y:,.0f}<extra></extra>" },
+      { x: [0, days], y: [amt * (1 - bar), amt * (1 - bar)], mode: "lines", line: { color: css("--text-2"), width: 1, dash: "dot" }, name: `−${Math.round(bar * 100)}% loss level`, hoverinfo: "skip" },
+    ], { paper_bgcolor: css("--surface"), plot_bgcolor: css("--surface"),
+      font: { family: getComputedStyle(document.body).fontFamily, color: css("--text-2"), size: 12 },
+      margin: { l: 64, r: 16, t: 32, b: 48 }, legend: { orientation: "h", y: 1.02, yanchor: "bottom", x: 0 },
+      xaxis: { title: "trading days ahead", gridcolor: css("--grid") }, yaxis: { title: "value, ₹", gridcolor: css("--grid") }, hovermode: "x" },
+    { displaylogo: false, responsive: true });
+  };
+  el("mc").addEventListener("change", update);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+  update();
+})();
+</script>
