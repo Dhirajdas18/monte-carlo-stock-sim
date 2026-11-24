@@ -1,5 +1,6 @@
 """Price data: fetching (Yahoo Finance or a local NSE bhavcopy lake) and loading."""
 
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -15,9 +16,20 @@ def fetch_yfinance(start: str = START, end: str | None = None) -> pd.DataFrame:
     import yfinance as yf
 
     tickers = {f"{s}.NS": s for s in SYMBOLS} | {"^NSEI": INDEX}
-    raw = yf.download(
-        list(tickers), start=start, end=end, auto_adjust=False, actions=True, progress=False
-    )
+    # threads=False: parallel downloads race on yfinance's SQLite cache ("database is locked")
+    # and silently drop a ticker, so download one at a time and retry any that come back empty.
+    for attempt in range(3):
+        raw = yf.download(
+            list(tickers), start=start, end=end, auto_adjust=False, actions=True,
+            progress=False, threads=False,
+        )
+        adj_close = raw["Adj Close"]
+        missing = [t for t in tickers if t not in adj_close or adj_close[t].isna().all()]
+        if not missing:
+            break
+        time.sleep(5 * (attempt + 1))
+    else:
+        raise RuntimeError(f"Yahoo returned no data for {missing} after 3 attempts")
     adj = raw["Adj Close"].rename(columns=tickers)
     close = raw["Close"].rename(columns=tickers)  # Yahoo's Close is already split-adjusted
     splits = raw["Stock Splits"].rename(columns=tickers).fillna(0)
