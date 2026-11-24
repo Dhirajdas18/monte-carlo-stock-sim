@@ -15,7 +15,8 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not i
 
 def _node(expr: str):
     script = f"const m = require({json.dumps(str(JS))}); console.log(JSON.stringify({expr}));"
-    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    # through stdin: Linux caps a single command-line argument at 128 KB
+    out = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
 
